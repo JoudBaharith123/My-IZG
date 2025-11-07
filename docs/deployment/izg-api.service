@@ -1,0 +1,17 @@
+[Unit]
+Description=Intelligent Zone Generator API
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/logistics-ai-platform/services/06-izg-backend
+EnvironmentFile=/opt/logistics-ai-platform/services/06-izg-backend/.env
+ExecStart=/usr/bin/env uvicorn src.app.main:app --host 0.0.0.0 --port 8084
+Restart=on-failure
+User=izg
+Group=izg
+StandardOutput=append:/var/log/izg-api.log
+StandardError=append:/var/log/izg-api.err.log
+
+[Install]
+WantedBy=multi-user.target

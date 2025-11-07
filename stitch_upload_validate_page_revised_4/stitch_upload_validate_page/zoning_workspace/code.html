@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Zoning Workspace - Intelligent Zone Generator</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300..700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined" rel="stylesheet"/>
+<script>
+    tailwind.config = {
+        darkMode: "class",
+        theme: {
+            extend: {
+                colors: {
+                    "primary": "#3713ec",
+                    "background-light": "#f6f6f8",
+                    "background-dark": "#131022",
+                    "success": "#10B981",
+                    "warning": "#F59E0B",
+                    "error": "#EF4444"
+                },
+                fontFamily: {
+                    "display": ["Space Grotesk", "sans-serif"]
+                },
+                borderRadius: {
+                    "DEFAULT": "0.5rem",
+                    "lg": "1rem",
+                    "xl": "1.5rem",
+                    "full": "9999px"
+                },
+            },
+        },
+    }
+    </script>
+<style>
+    .material-symbols-outlined {
+        font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+    }
+    </style>
+</head>
+<body class="bg-background-light dark:bg-background-dark font-display text-gray-800 dark:text-gray-200">
+<div class="flex flex-col h-screen">
+<header class="flex items-center justify-between p-4 bg-white dark:bg-background-dark border-b border-gray-200 dark:border-gray-800 shrink-0">
+<div class="flex items-center gap-6">
+<div class="flex items-center gap-3">
+<div class="bg-center bg-no-repeat aspect-square bg-cover rounded-full size-8" data-alt="IZG company logo" style='background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuAWbt-nHdz2XTedJFD0afar673D1M1xAok_uSh6sNWL5ngEVAfJYybZOZjRYfm7HQJWyYCLo7tGmFDRpKlTdLpu_CauUPJnurMnRTMHyUlZXAk6SU8RRvHSjSA2hfUfGNgEA77nxX_0osrrxUjJv0Xvbgv1Sthh17rYybtXrTQXKcp98LkQL9Na6C-CDxID1PtkT-ZR7BfCyzD6DSrfWtfxyKs30BPJruZjt5aQ8bgjH-N3v5uHi5ayeAmGfgivPJmACEcTe5cgMe6M");'></div>
+<h1 class="text-gray-900 dark:text-white text-lg font-bold">Intelligent Zone Generator</h1>
+</div>
+<nav class="hidden md:flex items-center gap-4">
+<a class="text-gray-500 dark:text-gray-400 hover:text-primary dark:hover:text-white text-sm font-medium" href="#">Dashboard</a>
+<a class="text-primary dark:text-white text-sm font-bold border-b-2 border-primary pb-1" href="#">Zoning Workspace</a>
+<a class="text-gray-500 dark:text-gray-400 hover:text-primary dark:hover:text-white text-sm font-medium" href="#">History</a>
+<a class="text-gray-500 dark:text-gray-400 hover:text-primary dark:hover:text-white text-sm font-medium" href="#">Settings</a>
+</nav>
+</div>
+<div class="flex items-center gap-4">
+<div class="flex items-center gap-2">
+<span class="relative flex h-2.5 w-2.5">
+<span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-success/75"></span>
+<span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-success"></span>
+</span>
+<p class="text-gray-600 dark:text-gray-300 text-sm">OSRM Health: <span class="font-medium text-success">Online</span></p>
+</div>
+<button class="flex min-w-[84px] cursor-pointer items-center justify-center overflow-hidden rounded-xl h-10 px-4 bg-primary text-white text-sm font-bold leading-normal hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 dark:focus:ring-offset-background-dark">
+<span class="truncate">Run Plan</span>
+</button>
+</div>
+</header>
+<main class="flex-1 overflow-y-auto">
+<div class="flex flex-col lg:flex-row h-full">
+<div class="w-full lg:w-[30%] lg:max-w-md bg-white dark:bg-background-dark p-6 overflow-y-auto border-r border-gray-200 dark:border-gray-800">
+<div class="space-y-6">
+<h2 class="text-2xl font-bold text-gray-900 dark:text-white">Zoning Workspace</h2>
+<div>
+<label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2" for="city-selector">City Selector</label>
+<select class="form-select w-full rounded-lg text-gray-900 dark:text-white focus:outline-0 focus:ring-2 focus:ring-primary/50 border border-gray-300 dark:border-gray-700 bg-background-light dark:bg-gray-800 h-11 px-3 text-base" id="city-selector">
+<option>Riyadh</option>
+<option>Jeddah</option>
+<option>Dammam</option>
+</select>
+<p class="text-xs text-gray-500 dark:text-gray-400 mt-2">Depot: Riyadh Central Depot, 123 Main St</p>
+</div>
+<div>
+<label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2" for="target-zones">Target Zones</label>
+<input class="form-input w-full rounded-lg text-gray-900 dark:text-white focus:outline-0 focus:ring-2 focus:ring-primary/50 border border-gray-300 dark:border-gray-700 bg-background-light dark:bg-gray-800 h-11 placeholder:text-gray-400 dark:placeholder:text-gray-500 px-3 text-base" id="target-zones" max="24" min="4" type="number" value="12"/>
+<p class="text-xs text-gray-500 dark:text-gray-400 mt-2">Enter the desired number of zones (min 4, max 24).</p>
+</div>
+<div>
+<label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Method</label>
+<div class="grid grid-cols-2 lg:grid-cols-4 gap-1 p-1 bg-gray-100 dark:bg-gray-800 rounded-lg">
+<button class="px-2 py-1.5 text-xs font-medium rounded-md text-gray-600 dark:text-gray-300 hover:bg-white/50 dark:hover:bg-gray-700/50">Polar</button>
+<button class="px-2 py-1.5 text-xs font-medium rounded-md text-gray-600 dark:text-gray-300 hover:bg-white/50 dark:hover:bg-gray-700/50">Isochrone</button>
+<button class="px-2 py-1.5 text-xs font-medium rounded-md bg-white dark:bg-gray-700 text-primary dark:text-white shadow-sm">Clustering</button>
+<button class="px-2 py-1.5 text-xs font-medium rounded-md text-gray-600 dark:text-gray-300 hover:bg-white/50 dark:hover:bg-gray-700/50">Manual</button>
+</div>
+<div class="mt-4 space-y-4">
+<div>
+<label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2" for="max-customers">Max customers per zone</label>
+<input class="form-input w-full rounded-lg text-gray-900 dark:text-white focus:outline-0 focus:ring-2 focus:ring-primary/50 border border-gray-300 dark:border-gray-700 bg-background-light dark:bg-gray-800 h-11 px-3" id="max-customers" type="number" value="500"/>
+</div>
+<div>
+<div class="flex justify-between items-center mb-2">
+<label class="text-sm font-medium text-gray-700 dark:text-gray-300" for="balance-tolerance-slider">Balance Tolerance</label>
+<span class="text-sm font-medium text-gray-900 dark:text-white">15%</span>
+</div>
+<input class="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer accent-primary" id="balance-tolerance-slider" max="50" min="0" type="range" value="15"/>
+</div>
+</div>
+</div>
+<div class="p-4 rounded-lg bg-gray-50 dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700/50 space-y-4">
+<div class="flex justify-between items-center">
+<h3 class="text-base font-bold text-gray-900 dark:text-white">Balancing</h3>
+<button aria-checked="true" class="relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent bg-primary transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 dark:focus:ring-offset-background-dark" role="switch">
+<span class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out translate-x-5"></span>
+</button>
+</div>
+<div>
+<div class="flex justify-between items-center mb-2">
+<label class="text-sm font-medium text-gray-700 dark:text-gray-300" for="finance-tolerance">Tolerance</label>
+<span class="text-sm font-medium text-gray-900 dark:text-white">20%</span>
+</div>
+<input class="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer accent-primary" id="finance-tolerance" max="40" min="0" type="range" value="20"/>
+<p class="text-xs text-gray-500 dark:text-gray-400 mt-2">Note: Tolerance over 15% requires finance clearance.</p>
+</div>
+</div>
+<div class="flex items-center gap-3 pt-4">
+<button class="flex-1 flex min-w-[84px] cursor-pointer items-center justify-center overflow-hidden rounded-xl h-11 px-4 bg-primary text-white text-base font-bold leading-normal hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 dark:focus:ring-offset-background-dark">
+<span class="truncate">Generate Zones</span>
+</button>
+<button class="flex min-w-[84px] cursor-pointer items-center justify-center overflow-hidden rounded-xl h-11 px-4 bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200 text-base font-medium leading-normal hover:bg-gray-300 dark:hover:bg-gray-600">
+<span class="truncate">Reset Parameters</span>
+</button>
+</div>
+<div class="text-center space-y-1">
+<p class="text-sm text-gray-600 dark:text-gray-300">Solver time: <span class="font-medium text-gray-900 dark:text-white">15.2s</span></p>
+<p class="text-xs text-gray-400 dark:text-gray-500">Last run: Today at 2:45 PM</p>
+</div>
+</div>
+</div>
+<div class="flex-1 flex flex-col p-6 overflow-hidden">
+<div class="flex-shrink-0 mb-6 flex items-center gap-3 rounded-lg bg-warning/10 dark:bg-warning/20 p-4 border border-warning/30 dark:border-warning/50">
+<span class="material-symbols-outlined text-warning">warning</span>
+<p class="text-sm text-yellow-800 dark:text-yellow-200">Reminder: Large customer reassignments may require finance clearance. Please check the 'Transfers' tab before finalizing.</p>
+</div>
+<div class="relative w-full h-[60vh] bg-gray-200 dark:bg-gray-900 rounded-xl shadow-sm overflow-hidden mb-6 flex-shrink-0">
+<div class="absolute inset-0 bg-cover bg-center" data-alt="A map of a city showing colorful polygonal zones, customer location pins, and depot markers." style="background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuC1TwfUZH5HuejvX8oiOKPK-vI14zP2JSucQh4N5OvS7AWHmncqtBxOWd4gUUoxzot9SJ4aPdV6WhfPEDIH1_3FLkyjL_At4XldHNwnrD4oq-IqRf1xOVbUFHA9Swk_P8_9givBjzV23fA1FXQQJ0UVGiOoIii-0YN8hn00EjnqhX0vxPeHj0nltgmc5RuHAfohGshMtcmhhMLnOtdepBq-_lUOuOh4--nHzPhsnRd7vbBNqLzC-0qz12R8iY3zaFMKyvdKKJOUnAbB');"></div>
+<div class="absolute top-4 right-4 bg-white dark:bg-gray-800/80 backdrop-blur-sm p-3 rounded-lg shadow-lg space-y-2 border border-gray-200 dark:border-gray-700">
+<h4 class="font-bold text-sm text-gray-900 dark:text-white">Layers</h4>
+<label class="flex items-center gap-2 cursor-pointer">
+<input class="form-checkbox h-4 w-4 rounded text-primary focus:ring-primary/50 border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:checked:bg-primary" type="checkbox"/>
+<span class="text-sm text-gray-700 dark:text-gray-300">Existing <span class="opacity-60">(Dotted)</span></span>
+</label>
+<label class="flex items-center gap-2 cursor-pointer">
+<input checked="" class="form-checkbox h-4 w-4 rounded text-primary focus:ring-primary/50 border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:checked:bg-primary" type="checkbox"/>
+<span class="text-sm text-gray-700 dark:text-gray-300">Proposed <span class="opacity-60">(Bold)</span></span>
+</label>
+<label class="flex items-center gap-2 cursor-pointer">
+<input class="form-checkbox h-4 w-4 rounded text-primary focus:ring-primary/50 border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:checked:bg-primary" type="checkbox"/>
+<span class="text-sm text-gray-700 dark:text-gray-300">Unassigned</span>
+</label>
+<label class="flex items-center gap-2 cursor-pointer">
+<input checked="" class="form-checkbox h-4 w-4 rounded text-primary focus:ring-primary/50 border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:checked:bg-primary" type="checkbox"/>
+<span class="text-sm text-gray-700 dark:text-gray-300">Depots</span>
+</label>
+</div>
+<div class="absolute top-4 left-4 bg-white dark:bg-gray-800/80 backdrop-blur-sm p-2 rounded-lg shadow-lg flex flex-col gap-1 border border-gray-200 dark:border-gray-700">
+<button class="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700"><span class="material-symbols-outlined text-gray-700 dark:text-gray-300">add</span></button>
+<button class="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700"><span class="material-symbols-outlined text-gray-700 dark:text-gray-300">remove</span></button>
+<hr class="border-gray-200 dark:border-gray-600"/>
+<button class="p-2 rounded bg-primary/10 dark:bg-primary/20 text-primary dark:text-white"><span class="material-symbols-outlined">edit</span></button>
+<button class="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700"><span class="material-symbols-outlined text-gray-700 dark:text-gray-300">polyline</span></button>
+<button class="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700"><span class="material-symbols-outlined text-gray-700 dark:text-gray-300">delete</span></button>
+</div>
+</div>
+<div class="flex-1 bg-white dark:bg-gray-900/50 dark:border dark:border-gray-800 rounded-xl shadow-sm flex flex-col overflow-hidden">
+<div class="border-b border-gray-200 dark:border-gray-700 px-6 shrink-0">
+<nav aria-label="Tabs" class="-mb-px flex space-x-8">
+<a class="border-primary text-primary whitespace-nowrap py-4 px-1 border-b-2 font-bold text-sm" href="#">Summary</a>
+<a class="border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:border-gray-300 dark:hover:border-gray-600 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm" href="#">Transfers (12)</a>
+<a class="border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:border-gray-300 dark:hover:border-gray-600 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm" href="#">Downloads</a>
+</nav>
+</div>
+<div class="p-6 overflow-y-auto">
+<div class="overflow-x-auto">
+<table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+<thead class="bg-gray-50 dark:bg-gray-800">
+<tr>
+<th class="px-4 py-3 text-left text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider" scope="col">Zone ID</th>
+<th class="px-4 py-3 text-left text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider" scope="col">Customer Count</th>
+<th class="px-4 py-3 text-left text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider" scope="col">Delta %</th>
+<th class="px-4 py-3 text-left text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider" scope="col">Avg Distance</th>
+<th class="px-4 py-3 text-left text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider" scope="col">Tolerance</th>
+</tr>
+</thead>
+<tbody class="bg-white dark:bg-gray-900/50 divide-y divide-gray-200 dark:divide-gray-700">
+<tr>
+<td class="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-white">RYD-01</td>
+<td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">498</td>
+<td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">-0.4%</td>
+<td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">12.5 km</td>
+<td class="px-4 py-3 whitespace-nowrap text-sm">
+<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-success/10 text-success gap-1.5"><span class="material-symbols-outlined text-sm" style="font-variation-settings: 'FILL' 1;">check_circle</span> In Tolerance</span>
+</td>
+</tr>
+<tr>
+<td class="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-white">RYD-02</td>
+<td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">505</td>
+<td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">+1.0%</td>
+<td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">14.1 km</td>
+<td class="px-4 py-3 whitespace-nowrap text-sm">
+<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-success/10 text-success gap-1.5"><span class="material-symbols-outlined text-sm" style="font-variation-settings: 'FILL' 1;">check_circle</span> In Tolerance</span>
+</td>
+</tr>
+<tr>
+<td class="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-white">RYD-03</td>
+<td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">495</td>
+<td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">-1.0%</td>
+<td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">11.8 km</td>
+<td class="px-4 py-3 whitespace-nowrap text-sm">
+<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-success/10 text-success gap-1.5"><span class="material-symbols-outlined text-sm" style="font-variation-settings: 'FILL' 1;">check_circle</span> In Tolerance</span>
+</td>
+</tr>
+<tr>
+<td class="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-white">RYD-04</td>
+<td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">512</td>
+<td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">+2.4%</td>
+<td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">15.2 km</td>
+<td class="px-4 py-3 whitespace-nowrap text-sm">
+<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-warning/10 text-warning gap-1.5"><span class="material-symbols-outlined text-sm" style="font-variation-settings: 'FILL' 1;">error</span> Out of Tolerance</span>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+</div>
+</div>
+</div>
+</main>
+</div>
+
+</body></html>

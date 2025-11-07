@@ -1,0 +1,35 @@
+version: "3.9"
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: izg-api
+    command: uvicorn src.app.main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - .:/app
+    environment:
+      - IZG_DATA_ROOT=/app/data
+      - IZG_CUSTOMER_FILE=/app/data/Easyterrritory_26831_29_oct_2025.CSV
+      - IZG_DC_LOCATIONS_FILE=/app/data/dc_locations.xlsx
+      - IZG_OSRM_BASE_URL=http://osrm:5000
+    ports:
+      - "8000:8000"
+    depends_on:
+      - osrm
+
+  osrm:
+    image: ghcr.io/project-osrm/osrm-backend:latest
+    container_name: izg-osrm
+    command: osrm-routed --algorithm mld /data/saudi-latest.osrm
+    volumes:
+      - ./osrm:/data
+    ports:
+      - "5000:5000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s

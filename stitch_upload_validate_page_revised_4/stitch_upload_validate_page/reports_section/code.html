@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Generated Reports - Intelligent Zone Generator</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300..700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined" rel="stylesheet"/>
+<script id="tailwind-config">
+    tailwind.config = {
+      darkMode: "class",
+      theme: {
+        extend: {
+          colors: {
+            "primary": "#3713ec",
+            "background-light": "#f6f6f8",
+            "background-dark": "#131022",
+            "card-light": "#ffffff",
+            "card-dark": "#1e1b30",
+            "text-light-primary": "#1f2937",
+            "text-dark-primary": "#f3f4f6",
+            "text-light-secondary": "#4b5563",
+            "text-dark-secondary": "#9ca3af",
+          },
+          fontFamily: {
+            "display": ["Space Grotesk", "sans-serif"]
+          },
+          borderRadius: {
+            "DEFAULT": "0.5rem",
+            "lg": "1rem",
+            "xl": "1.5rem",
+            "full": "9999px"
+          },
+        },
+      },
+    }
+  </script>
+</head>
+<body class="font-display">
+<div class="relative flex h-auto min-h-screen w-full flex-col bg-background-light dark:bg-background-dark group/design-root overflow-x-hidden">
+<div class="layout-container flex h-full grow flex-col">
+<div class="px-4 sm:px-8 md:px-12 lg:px-20 flex flex-1 justify-center py-5">
+<div class="layout-content-container flex flex-col max-w-[1400px] flex-1">
+<header class="flex items-center justify-between whitespace-nowrap border-b border-solid border-gray-200 dark:border-gray-700 px-4 sm:px-6 md:px-10 py-3 mb-8">
+<div class="flex items-center gap-4 text-text-light-primary dark:text-text-dark-primary">
+<div class="size-6 text-primary">
+<svg fill="none" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg">
+<path d="M36.7273 44C33.9891 44 31.6043 39.8386 30.3636 33.69C29.123 39.8386 26.7382 44 24 44C21.2618 44 18.877 39.8386 17.6364 33.69C16.3957 39.8386 14.0109 44 11.2727 44C7.25611 44 4 35.0457 4 24C4 12.9543 7.25611 4 11.2727 4C14.0109 4 16.3957 8.16144 17.6364 14.31C18.877 8.16144 21.2618 4 24 4C26.7382 4 29.123 8.16144 30.3636 14.31C31.6043 8.16144 33.9891 4 36.7273 4C40.7439 4 44 12.9543 44 24C44 35.0457 40.7439 44 36.7273 44Z" fill="currentColor"></path>
+</svg>
+</div>
+<h2 class="text-lg font-bold leading-tight tracking-[-0.015em]">Intelligent Zone Generator</h2>
+</div>
+<div class="hidden md:flex flex-1 justify-end items-center gap-8">
+<div class="flex items-center gap-9 text-sm font-medium text-text-light-primary dark:text-text-dark-primary">
+<a class="hover:text-primary" href="#">Dashboard</a>
+<a class="hover:text-primary" href="#">Planner</a>
+<a class="text-primary font-semibold" href="#">Reports</a>
+<a class="hover:text-primary" href="#">Settings</a>
+</div>
+<button class="flex min-w-[84px] max-w-[480px] cursor-pointer items-center justify-center overflow-hidden rounded-xl h-10 px-4 bg-primary text-white text-sm font-bold leading-normal tracking-[0.015em] hover:bg-opacity-90 transition-colors">
+<span class="truncate">New Plan</span>
+</button>
+<div class="bg-center bg-no-repeat aspect-square bg-cover rounded-full size-10" data-alt="User avatar image" style='background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuB_I02z3CRfPIs0SsoFuJSKFy5RyezF5dNdiZh02JpPaO_hr23sf5PkRiP5bjKKaSw7iokqSwZtQFNQcV3GCgiZYen7MQpCqkFDz0Szj0wUc34erLZ8UX3sRlYp9yh8KRkNbDaHMF48usA5ZiByG8KLvfI_nU7VPEwLDMhDFVQzmAj5c15xRrKfyqxMFpennjg_8AXmL64VvjKhiGHx_KrYJ41d1I6Jeec4Gw4Hx9wjm-CofISOwB17rdRAIja12qUEOqBybcwtiYQl");'></div>
+</div>
+<button class="md:hidden text-text-light-primary dark:text-text-dark-primary">
+<span class="material-symbols-outlined">menu</span>
+</button>
+</header>
+<main class="flex flex-col lg:flex-row gap-8 p-4">
+<div class="flex-1">
+<div class="flex flex-col sm:flex-row flex-wrap justify-between items-center gap-4 mb-6">
+<p class="text-text-light-primary dark:text-text-dark-primary text-4xl font-black leading-tight tracking-[-0.033em]">Generated Reports</p>
+<div class="flex items-center gap-4 w-full sm:w-auto">
+<div class="relative flex items-center bg-card-light dark:bg-card-dark border border-gray-200 dark:border-gray-700 rounded-lg p-1 text-sm text-text-light-secondary dark:text-text-dark-secondary">
+<button class="px-3 py-1 rounded-md bg-gray-100 dark:bg-gray-800 text-text-light-primary dark:text-text-dark-primary font-medium">Date Range</button>
+<button class="px-3 py-1 rounded-md">Run ID</button>
+</div>
+<div class="relative flex-grow sm:flex-grow-0">
+<span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-text-light-secondary dark:text-text-dark-secondary">search</span>
+<input class="w-full pl-10 pr-4 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-card-light dark:bg-card-dark focus:ring-primary focus:border-primary text-text-light-primary dark:text-text-dark-primary placeholder-text-light-secondary dark:placeholder-text-dark-secondary" placeholder="Search report name..." type="text"/>
+</div>
+</div>
+</div>
+<div class="bg-yellow-100 dark:bg-yellow-900/50 border-l-4 border-yellow-500 text-yellow-800 dark:text-yellow-200 p-4 rounded-r-lg mb-6 flex items-start gap-3">
+<span class="material-symbols-outlined mt-1">warning</span>
+<div>
+<p class="font-bold">Latest run has warnings</p>
+<p class="text-sm">There were 3 transfers and 2 violations in the latest run. <a class="font-semibold underline hover:text-yellow-600 dark:hover:text-yellow-100" href="#">View details</a></p>
+</div>
+</div>
+<div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+<div class="flex flex-col bg-card-light dark:bg-card-dark rounded-lg shadow-md hover:shadow-xl transition-shadow p-6">
+<div class="flex items-start gap-4 mb-4">
+<div class="text-primary flex items-center justify-center rounded-lg bg-primary/10 shrink-0 size-12">
+<span class="material-symbols-outlined text-3xl">csv</span>
+</div>
+<div class="flex flex-1 flex-col justify-center">
+<p class="text-text-light-primary dark:text-text-dark-primary text-lg font-bold leading-tight">customers_with_routes.csv</p>
+<p class="text-text-light-secondary dark:text-text-dark-secondary text-sm font-normal leading-normal">Generated: 2023-10-27 14:30 • 15,230 records</p>
+</div>
+</div>
+<div class="flex flex-wrap gap-2 mb-6">
+<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 dark:bg-gray-700 text-text-light-secondary dark:text-text-dark-secondary">CSV</span>
+<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 dark:bg-gray-700 text-text-light-secondary dark:text-text-dark-secondary">2.4 MB</span>
+<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 dark:bg-gray-700 text-text-light-secondary dark:text-text-dark-secondary">Updated 2 hours ago</span>
+</div>
+<div class="mt-auto flex flex-col sm:flex-row items-center gap-3 pt-4 border-t border-gray-200 dark:border-gray-700">
+<button class="w-full sm:w-auto flex-grow flex items-center justify-center gap-2 min-w-[84px] cursor-pointer overflow-hidden rounded-lg h-10 px-4 bg-primary text-white text-sm font-bold leading-normal tracking-[0.015em] hover:bg-opacity-90 transition-colors">
+<span class="material-symbols-outlined">download</span>
+<span class="truncate">Download</span>
+</button>
+<div class="flex items-center gap-2 text-text-light-secondary dark:text-text-dark-secondary">
+<button class="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-primary transition-colors">
+<span class="material-symbols-outlined text-xl">folder_open</span>
+</button>
+<button class="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-primary transition-colors">
+<span class="material-symbols-outlined text-xl">share</span>
+</button>
+</div>
+</div>
+</div>
+<div class="flex flex-col bg-card-light dark:bg-card-dark rounded-lg shadow-md hover:shadow-xl transition-shadow p-6">
+<div class="flex items-start gap-4 mb-4">
+<div class="text-primary flex items-center justify-center rounded-lg bg-primary/10 shrink-0 size-12">
+<span class="material-symbols-outlined text-3xl">csv</span>
+</div>
+<div class="flex flex-1 flex-col justify-center">
+<p class="text-text-light-primary dark:text-text-dark-primary text-lg font-bold leading-tight">route_metrics.csv</p>
+<p class="text-text-light-secondary dark:text-text-dark-secondary text-sm font-normal leading-normal">Generated: 2023-10-27 14:28 • 5,480 records</p>
+</div>
+</div>
+<div class="flex flex-wrap gap-2 mb-6">
+<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 dark:bg-gray-700 text-text-light-secondary dark:text-text-dark-secondary">CSV</span>
+<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 dark:bg-gray-700 text-text-light-secondary dark:text-text-dark-secondary">850 KB</span>
+<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 dark:bg-gray-700 text-text-light-secondary dark:text-text-dark-secondary">Updated 2 hours ago</span>
+</div>
+<div class="mt-auto flex flex-col sm:flex-row items-center gap-3 pt-4 border-t border-gray-200 dark:border-gray-700">
+<button class="w-full sm:w-auto flex-grow flex items-center justify-center gap-2 min-w-[84px] cursor-pointer overflow-hidden rounded-lg h-10 px-4 bg-primary text-white text-sm font-bold leading-normal tracking-[0.015em] hover:bg-opacity-90 transition-colors">
+<span class="material-symbols-outlined">download</span>
+<span class="truncate">Download</span>
+</button>
+<div class="flex items-center gap-2 text-text-light-secondary dark:text-text-dark-secondary">
+<button class="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-primary transition-colors">
+<span class="material-symbols-outlined text-xl">folder_open</span>
+</button>
+<button class="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-primary transition-colors">
+<span class="material-symbols-outlined text-xl">share</span>
+</button>
+</div>
+</div>
+</div>
+<div class="flex flex-col bg-card-light dark:bg-card-dark rounded-lg shadow-md hover:shadow-xl transition-shadow p-6">
+<div class="flex items-start gap-4 mb-4">
+<div class="text-red-500 flex items-center justify-center rounded-lg bg-red-500/10 shrink-0 size-12">
+<span class="material-symbols-outlined text-3xl">picture_as_pdf</span>
+</div>
+<div class="flex flex-1 flex-col justify-center">
+<p class="text-text-light-primary dark:text-text-dark-primary text-lg font-bold leading-tight">zone_summary.pdf</p>
+<p class="text-text-light-secondary dark:text-text-dark-secondary text-sm font-normal leading-normal">Generated: 2023-10-27 14:32 • 50 pages</p>
+</div>
+</div>
+<div class="flex flex-wrap gap-2 mb-6">
+<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 dark:bg-gray-700 text-text-light-secondary dark:text-text-dark-secondary">PDF</span>
+<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 dark:bg-gray-700 text-text-light-secondary dark:text-text-dark-secondary">5.1 MB</span>
+<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 dark:bg-gray-700 text-text-light-secondary dark:text-text-dark-secondary">Updated 2 hours ago</span>
+</div>
+<div class="mt-auto flex flex-col sm:flex-row items-center gap-3 pt-4 border-t border-gray-200 dark:border-gray-700">
+<button class="w-full sm:w-auto flex-grow flex items-center justify-center gap-2 min-w-[84px] cursor-pointer overflow-hidden rounded-lg h-10 px-4 bg-primary text-white text-sm font-bold leading-normal tracking-[0.015em] hover:bg-opacity-90 transition-colors">
+<span class="material-symbols-outlined">download</span>
+<span class="truncate">Download</span>
+</button>
+<div class="flex items-center gap-2 text-text-light-secondary dark:text-text-dark-secondary">
+<button class="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-primary transition-colors">
+<span class="material-symbols-outlined text-xl">folder_open</span>
+</button>
+<button class="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-primary transition-colors">
+<span class="material-symbols-outlined text-xl">share</span>
+</button>
+</div>
+</div>
+</div>
+<div class="flex flex-col items-center justify-center col-span-1 md:col-span-2 bg-card-light dark:bg-card-dark border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg p-12 text-center min-h-[300px]">
+<div class="flex items-center justify-center size-16 bg-gray-100 dark:bg-gray-700 rounded-full mb-4">
+<span class="material-symbols-outlined text-4xl text-text-light-secondary dark:text-text-dark-secondary">report</span>
+</div>
+<h3 class="text-xl font-bold text-text-light-primary dark:text-text-dark-primary">No Reports Found</h3>
+<p class="text-text-light-secondary dark:text-text-dark-secondary mt-2">There are no reports matching your current filters.</p>
+<p class="text-text-light-secondary dark:text-text-dark-secondary mt-1">Try adjusting the date range or search query.</p>
+</div>
+</div>
+</div>
+<aside class="w-full lg:w-80 flex-shrink-0">
+<div class="bg-card-light dark:bg-card-dark rounded-lg shadow-sm p-6 sticky top-8">
+<h3 class="text-xl font-bold text-text-light-primary dark:text-text-dark-primary mb-4">Run History</h3>
+<div class="space-y-4">
+<div class="flex items-center gap-4">
+<span class="material-symbols-outlined text-green-500">check_circle</span>
+<div class="flex-1">
+<a class="font-medium text-text-light-primary dark:text-text-dark-primary hover:text-primary dark:hover:text-primary transition-colors" href="#">Run ID: 20231027-1425</a>
+<p class="text-sm text-text-light-secondary dark:text-text-dark-secondary">Oct 27, 2:25 PM - Completed</p>
+</div>
+</div>
+<div class="flex items-center gap-4">
+<span class="material-symbols-outlined text-yellow-500">warning</span>
+<div class="flex-1">
+<a class="font-medium text-text-light-primary dark:text-text-dark-primary hover:text-primary dark:hover:text-primary transition-colors" href="#">Run ID: 20231026-0915</a>
+<p class="text-sm text-text-light-secondary dark:text-text-dark-secondary">Oct 26, 9:15 AM - Warnings</p>
+</div>
+</div>
+<div class="flex items-center gap-4">
+<span class="material-symbols-outlined text-green-500">check_circle</span>
+<div class="flex-1">
+<a class="font-medium text-text-light-primary dark:text-text-dark-primary hover:text-primary dark:hover:text-primary transition-colors" href="#">Run ID: 20231025-1800</a>
+<p class="text-sm text-text-light-secondary dark:text-text-dark-secondary">Oct 25, 6:00 PM - Completed</p>
+</div>
+</div>
+<div class="flex items-center gap-4">
+<span class="material-symbols-outlined text-red-500">cancel</span>
+<div class="flex-1">
+<a class="font-medium text-text-light-primary dark:text-text-dark-primary hover:text-primary dark:hover:text-primary transition-colors" href="#">Run ID: 20231025-1130</a>
+<p class="text-sm text-text-light-secondary dark:text-text-dark-secondary">Oct 25, 11:30 AM - Failed</p>
+</div>
+</div>
+</div>
+</div>
+</aside>
+</main>
+</div>
+</div>
+</div>
+</div>
+
+</body></html>

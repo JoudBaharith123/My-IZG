@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Intelligent Zone Generator - Customer Data Upload</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined" rel="stylesheet"/>
+<style>
+      .material-symbols-outlined {
+        font-variation-settings:
+        'FILL' 0,
+        'wght' 400,
+        'GRAD' 0,
+        'opsz' 24
+      }
+    </style>
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            colors: {
+              "primary": "#3713ec",
+              "background-light": "#f6f6f8",
+              "background-dark": "#131022",
+            },
+            fontFamily: {
+              "display": ["Space Grotesk"]
+            },
+            borderRadius: {"DEFAULT": "0.5rem", "lg": "1rem", "xl": "1.5rem", "full": "9999px"},
+          },
+        },
+      }
+    </script>
+</head>
+<body class="font-display">
+<div class="relative flex h-auto min-h-screen w-full flex-col bg-background-light dark:bg-background-dark group/design-root overflow-x-hidden">
+<div class="layout-container flex h-full grow flex-col">
+<header class="flex items-center justify-between whitespace-nowrap border-b border-solid border-[#e9e7f3] dark:border-background-dark/20 px-4 sm:px-6 lg:px-10 py-3 bg-white dark:bg-[#100d1b]">
+<div class="flex items-center gap-4 text-[#100d1b] dark:text-white">
+<div class="size-6 text-primary">
+<svg fill="none" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg">
+<path d="M36.7273 44C33.9891 44 31.6043 39.8386 30.3636 33.69C29.123 39.8386 26.7382 44 24 44C21.2618 44 18.877 39.8386 17.6364 33.69C16.3957 39.8386 14.0109 44 11.2727 44C7.25611 44 4 35.0457 4 24C4 12.9543 7.25611 4 11.2727 4C14.0109 4 16.3957 8.16144 17.6364 14.31C18.877 8.16144 21.2618 4 24 4C26.7382 4 29.123 8.16144 30.3636 14.31C31.6043 8.16144 33.9891 4 36.7273 4C40.7439 4 44 12.9543 44 24C44 35.0457 40.7439 44 36.7273 44Z" fill="currentColor"></path>
+</svg>
+</div>
+<h2 class="text-[#100d1b] dark:text-white text-lg font-bold leading-tight tracking-[-0.015em]">Intelligent Zone Generator</h2>
+</div>
+<div class="flex flex-1 justify-end gap-4 md:gap-8">
+<div class="hidden md:flex items-center gap-6">
+<a class="text-[#594c9a] dark:text-gray-300 text-sm font-medium leading-normal" href="#">Dashboard</a>
+<a class="text-primary dark:text-primary/90 text-sm font-bold leading-normal border-b-2 border-primary pb-1" href="#">Upload Data</a>
+<a class="text-[#594c9a] dark:text-gray-300 text-sm font-medium leading-normal" href="#">Balancing</a>
+<a class="text-[#594c9a] dark:text-gray-300 text-sm font-medium leading-normal" href="#">Routing</a>
+<a class="text-[#594c9a] dark:text-gray-300 text-sm font-medium leading-normal" href="#">Reports</a>
+</div>
+<div class="flex items-center gap-2">
+<div class="hidden sm:flex items-center gap-2 bg-green-100 dark:bg-green-500/20 px-3 py-1.5 rounded-full text-sm font-medium text-green-800 dark:text-green-300">
+<span>OSRM</span>
+<span class="text-base">✅</span>
+</div>
+<button class="hidden sm:flex min-w-[84px] max-w-[480px] cursor-pointer items-center justify-center overflow-hidden rounded-lg h-10 px-4 bg-primary text-white text-sm font-bold leading-normal tracking-[0.015em]">
+<span class="truncate">Start New Upload</span>
+</button>
+<button class="flex max-w-[480px] cursor-pointer items-center justify-center overflow-hidden rounded-lg h-10 bg-[#e9e7f3] dark:bg-primary/20 text-[#100d1b] dark:text-white gap-2 text-sm font-bold leading-normal tracking-[0.015em] min-w-0 px-2.5">
+<span class="material-symbols-outlined text-xl">notifications</span>
+</button>
+<button class="flex max-w-[480px] cursor-pointer items-center justify-center overflow-hidden rounded-lg h-10 bg-[#e9e7f3] dark:bg-primary/20 text-[#100d1b] dark:text-white gap-2 text-sm font-bold leading-normal tracking-[0.015em] min-w-0 px-2.5">
+<span class="material-symbols-outlined text-xl">help</span>
+</button>
+<div class="bg-center bg-no-repeat aspect-square bg-cover rounded-full size-10" data-alt="User profile picture" style='background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuDFYwHSZpIMVYLXQpglnSpBYQjFS7uxY2977TfQ7HcLs6K8X6gk0MBU3I4VcUWyZ2Ep2budtdHxXMtwpG-6EC8D6sbgV-4l0gE1zmoZjlRg05tN8L2kEAHsSpkr2V24WiaE0kSGKMCmcQayrDnkUeOcIMY0IXYmoo8AzBDo1mnhoFyDS_fUpLC-Uq9T6JGJCG6yni3EfHp5ady7aattVQg629vVvmm9pXNcnXKYe2KhbkI8LwfE1_EgVEiXN6FUGsLNXcHQZ5LueOtr");'></div>
+</div>
+</div>
+</header>
+<main class="flex-1 px-4 sm:px-6 lg:px-10 py-8">
+<div class="flex flex-col gap-6">
+<div class="flex flex-wrap justify-between gap-4 items-center">
+<div class="flex min-w-72 flex-col gap-2">
+<p class="text-[#100d1b] dark:text-white text-3xl font-black leading-tight tracking-[-0.033em]">Customer Data Upload &amp; Validation</p>
+<p class="text-[#594c9a] dark:text-gray-400 text-base font-normal leading-normal">Upload customer data, validate for errors, and review the results before processing.</p>
+</div>
+</div>
+<div class="bg-primary/10 dark:bg-primary/20 p-4 rounded-lg flex items-start gap-3">
+<span class="material-symbols-outlined text-primary dark:text-primary/90 mt-1">info</span>
+<div>
+<h4 class="font-bold text-[#100d1b] dark:text-white">Finance Clearance Requirement</h4>
+<p class="text-sm text-[#594c9a] dark:text-gray-300">A finance clearance is required before reassigning customers with outstanding balances. Please check the dedicated 'Finance Clearance Needed' validation section below.</p>
+</div>
+</div>
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+<div class="lg:col-span-2 flex flex-col gap-6">
+<div class="bg-white dark:bg-background-dark/50 p-6 rounded-lg shadow-md">
+<div class="flex flex-wrap justify-between items-start gap-4 mb-4">
+<h3 class="text-[#100d1b] dark:text-white text-lg font-bold leading-tight tracking-[-0.015em]">File Upload</h3>
+<div class="flex items-center gap-2 text-xs font-medium">
+<span class="text-[#594c9a] dark:text-gray-400">Latest validation run:</span>
+<span class="inline-flex items-center gap-1.5 rounded-full bg-orange-100 dark:bg-orange-500/20 px-2 py-0.5 text-orange-600 dark:text-orange-400">
+<span class="material-symbols-outlined text-sm">warning</span>
+<span>Warning</span>
+</span>
+</div>
+</div>
+<div class="flex flex-col items-center gap-6 rounded-lg border-2 border-dashed border-[#d3cfe7] dark:border-primary/30 px-6 py-10">
+<div class="flex flex-col items-center justify-center text-center">
+<span class="material-symbols-outlined text-5xl text-primary mb-2">cloud_upload</span>
+<p class="text-[#100d1b] dark:text-white text-lg font-bold leading-tight tracking-[-0.015em]">Upload Customer Data</p>
+<p class="text-[#594c9a] dark:text-gray-400 text-sm font-normal leading-normal">Drag &amp; drop CSV/XLSX or click to browse files</p>
+</div>
+<div class="w-full max-w-sm bg-[#f6f6f8] dark:bg-background-dark/60 p-3 rounded-lg flex items-center justify-between text-sm">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-[#594c9a]">description</span>
+<div class="flex flex-col">
+<span class="font-medium text-[#100d1b] dark:text-white">customer-data-q4.csv</span>
+<span class="text-[#594c9a] dark:text-gray-400">1.2 MB - CSV</span>
+</div>
+</div>
+<button class="text-[#594c9a] dark:text-gray-400 hover:text-red-500"><span class="material-symbols-outlined">close</span></button>
+</div>
+<div class="flex flex-col items-center gap-2">
+<button class="flex min-w-[84px] max-w-[480px] cursor-pointer items-center justify-center overflow-hidden rounded-lg h-10 px-6 bg-primary text-white text-sm font-bold leading-normal tracking-[0.015em]">
+<span class="truncate">Validate Data</span>
+</button>
+<p class="text-xs text-[#594c9a] dark:text-gray-500">Maximum file size: 50 MB</p>
+</div>
+</div>
+</div>
+</div>
+<div class="lg:col-span-1 flex flex-col gap-6">
+<div class="bg-white dark:bg-background-dark/50 p-6 rounded-lg shadow-md">
+<div class="flex flex-col gap-4">
+<div>
+<h3 class="text-[#100d1b] dark:text-white text-lg font-bold leading-tight tracking-[-0.015em] mb-2">Last Upload Details</h3>
+<div class="text-sm space-y-2 text-[#100d1b] dark:text-white">
+<div class="flex justify-between">
+<span class="font-medium text-[#594c9a] dark:text-gray-400">File Name:</span>
+<span>jeddah_customers_q4_final.csv</span>
+</div>
+<div class="flex justify-between">
+<span class="font-medium text-[#594c9a] dark:text-gray-400">File Size:</span>
+<span>1.2 MB</span>
+</div>
+<div class="flex justify-between">
+<span class="font-medium text-[#594c9a] dark:text-gray-400">Timestamp:</span>
+<span>18 Oct 2023, 10:45 AM</span>
+</div>
+</div>
+</div>
+<button class="flex w-full min-w-[84px] max-w-[480px] cursor-pointer items-center justify-center overflow-hidden rounded-lg h-10 px-4 bg-[#e9e7f3] dark:bg-primary/20 text-[#100d1b] dark:text-white gap-2 text-sm font-medium leading-normal">
+<span class="material-symbols-outlined text-xl">download</span>
+<span class="truncate">Download Latest Customer CSV</span>
+</button>
+</div>
+</div>
+</div>
+<div class="lg:col-span-2 bg-white dark:bg-background-dark/50 p-4 rounded-lg shadow-md">
+<h2 class="text-[#100d1b] dark:text-white text-lg font-bold leading-tight tracking-[-0.015em] px-4 pb-3 pt-2">Validation Results</h2>
+<div class="flex flex-col gap-3 p-4">
+<details class="group">
+<summary class="flex cursor-pointer list-none items-center justify-between rounded-lg bg-[#f6f6f8] dark:bg-background-dark/60 p-3 font-medium">
+<div class="flex items-center gap-2">
+<span class="text-red-500 font-bold">Missing Coordinates</span>
+<span class="bg-red-100 dark:bg-red-500/20 text-red-600 dark:text-red-400 text-xs font-semibold px-2 py-0.5 rounded-full">8 (0.6%)</span>
+</div>
+<span class="transition group-open:rotate-180">
+<span class="material-symbols-outlined">expand_more</span>
+</span>
+</summary>
+<div class="mt-3 p-3 border border-t-0 rounded-b-lg border-gray-200 dark:border-primary/20">
+<p class="text-sm text-[#594c9a] dark:text-gray-400 mb-3">8 customers are missing latitude and/or longitude data. These records cannot be processed.</p>
+<button class="flex items-center gap-2 text-sm font-medium text-primary dark:text-primary/90 hover:underline">
+<span class="material-symbols-outlined text-base">download</span>
+<span>Download Issue Report</span>
+</button>
+</div>
+</details>
+<details class="group">
+<summary class="flex cursor-pointer list-none items-center justify-between rounded-lg bg-[#f6f6f8] dark:bg-background-dark/60 p-3 font-medium">
+<div class="flex items-center gap-2">
+<span class="text-orange-500 font-bold">Out-of-Bounds Locations</span>
+<span class="bg-orange-100 dark:bg-orange-500/20 text-orange-600 dark:text-orange-400 text-xs font-semibold px-2 py-0.5 rounded-full">3 (0.2%)</span>
+</div>
+<span class="transition group-open:rotate-180">
+<span class="material-symbols-outlined">expand_more</span>
+</span>
+</summary>
+</details>
+<details class="group">
+<summary class="flex cursor-pointer list-none items-center justify-between rounded-lg bg-[#f6f6f8] dark:bg-background-dark/60 p-3 font-medium">
+<div class="flex items-center gap-2">
+<span class="text-red-500 font-bold">Duplicate Customer IDs</span>
+<span class="bg-red-100 dark:bg-red-500/20 text-red-600 dark:text-red-400 text-xs font-semibold px-2 py-0.5 rounded-full">12 (1.0%)</span>
+</div>
+<span class="transition group-open:rotate-180">
+<span class="material-symbols-outlined">expand_more</span>
+</span>
+</summary>
+</details>
+<details class="group">
+<summary class="flex cursor-pointer list-none items-center justify-between rounded-lg bg-[#f6f6f8] dark:bg-background-dark/60 p-3 font-medium">
+<div class="flex items-center gap-2">
+<span class="text-yellow-500 font-bold">Finance Clearance Needed</span>
+<span class="bg-yellow-100 dark:bg-yellow-500/20 text-yellow-600 dark:text-yellow-400 text-xs font-semibold px-2 py-0.5 rounded-full">45 (3.6%)</span>
+</div>
+<span class="transition group-open:rotate-180">
+<span class="material-symbols-outlined">expand_more</span>
+</span>
+</summary>
+<div class="mt-3 p-3 border border-t-0 rounded-b-lg border-gray-200 dark:border-primary/20">
+<p class="text-sm text-[#594c9a] dark:text-gray-400 mb-3">45 customers have outstanding balances and require finance clearance before zone modification.</p>
+<button class="flex items-center gap-2 text-sm font-medium text-primary dark:text-primary/90 hover:underline">
+<span class="material-symbols-outlined text-base">download</span>
+<span>Download Clearance List</span>
+</button>
+</div>
+</details>
+</div>
+</div>
+</div>
+<div class="bg-white dark:bg-background-dark/50 rounded-lg shadow-md p-4">
+<div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
+<div class="p-2">
+<p class="text-2xl font-bold text-primary">26,831</p>
+<p class="text-sm text-[#594c9a] dark:text-gray-400">Total Customers</p>
+</div>
+<div class="p-2">
+<p class="text-2xl font-bold text-primary">16.2%</p>
+<p class="text-sm text-[#594c9a] dark:text-gray-400">% Unassigned</p>
+</div>
+<div class="p-2">
+<p class="text-2xl font-bold text-primary">45</p>
+<p class="text-sm text-[#594c9a] dark:text-gray-400">Zones Detected</p>
+</div>
+<div class="p-2">
+<div class="flex flex-col gap-1.5">
+<div class="flex items-center gap-2 text-xs">
+<span class="font-medium text-[#100d1b] dark:text-white w-12 text-left">JED-N1</span>
+<div class="flex-1 bg-gray-200 rounded-full h-2.5 dark:bg-gray-700">
+<div class="bg-primary h-2.5 rounded-full" style="width: 85%"></div>
+</div>
+</div>
+<div class="flex items-center gap-2 text-xs">
+<span class="font-medium text-[#100d1b] dark:text-white w-12 text-left">RYD-C2</span>
+<div class="flex-1 bg-gray-200 rounded-full h-2.5 dark:bg-gray-700">
+<div class="bg-primary h-2.5 rounded-full" style="width: 70%"></div>
+</div>
+</div>
+<div class="flex items-center gap-2 text-xs">
+<span class="font-medium text-[#100d1b] dark:text-white w-12 text-left">JED-S5</span>
+<div class="flex-1 bg-gray-200 rounded-full h-2.5 dark:bg-gray-700">
+<div class="bg-primary h-2.5 rounded-full" style="width: 60%"></div>
+</div>
+</div>
+</div>
+<p class="text-sm text-[#594c9a] dark:text-gray-400 mt-2">Top Zones by Customers</p>
+</div>
+</div>
+</div>
+<div class="bg-white dark:bg-background-dark/50 rounded-lg shadow-md overflow-hidden">
+<div class="p-4 border-b border-gray-200 dark:border-primary/20">
+<h2 class="text-[#100d1b] dark:text-white text-lg font-bold leading-tight tracking-[-0.015em] mb-4">Customer Details</h2>
+<div class="flex flex-wrap items-center gap-4">
+<div class="relative flex-grow">
+<span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">search</span>
+<input class="w-full rounded-lg border-gray-300 dark:border-primary/30 dark:bg-background-dark/60 dark:text-white pl-10 focus:border-primary focus:ring-primary" placeholder="Search customers..." type="text"/>
+</div>
+<div class="flex items-center gap-2">
+<span class="text-sm font-medium text-[#594c9a] dark:text-gray-400">Filters:</span>
+<span class="inline-flex items-center gap-x-1.5 rounded-full bg-primary/20 dark:bg-primary/30 px-2.5 py-1 text-xs font-medium text-primary dark:text-white">City: Jeddah <button><span class="material-symbols-outlined text-xs">close</span></button></span>
+<span class="inline-flex items-center gap-x-1.5 rounded-full bg-primary/20 dark:bg-primary/30 px-2.5 py-1 text-xs font-medium text-primary dark:text-white">Status: Error <button><span class="material-symbols-outlined text-xs">close</span></button></span>
+</div>
+</div>
+</div>
+<div class="overflow-x-auto">
+<table class="w-full text-sm text-left text-gray-500 dark:text-gray-400">
+<thead class="text-xs text-[#594c9a] dark:text-gray-300 uppercase bg-[#f6f6f8] dark:bg-background-dark/60 sticky top-0">
+<tr>
+<th class="px-6 py-3" scope="col">CusId</th>
+<th class="px-6 py-3" scope="col">CusName</th>
+<th class="px-6 py-3" scope="col">City</th>
+<th class="px-6 py-3" scope="col">Zone</th>
+<th class="px-6 py-3" scope="col">Latitude</th>
+<th class="px-6 py-3" scope="col">Longitude</th>
+<th class="px-6 py-3" scope="col">Status</th>
+</tr>
+</thead>
+<tbody>
+<tr class="bg-white dark:bg-background-dark/50 border-b dark:border-primary/20 text-[#100d1b] dark:text-white">
+<td class="px-6 py-3">CUST-001</td><td class="px-6 py-3">Abdullah Al-Fahd</td><td class="px-6 py-3">Jeddah</td><td class="px-6 py-3">JED-N1</td><td class="px-6 py-3">21.5433</td><td class="px-6 py-3">39.1728</td><td class="px-6 py-3"><span class="bg-green-100 dark:bg-green-500/20 text-green-800 dark:text-green-400 text-xs font-medium px-2.5 py-0.5 rounded-full">OK</span></td>
+</tr>
+<tr class="bg-red-50 dark:bg-red-500/10 border-b dark:border-primary/20 text-[#100d1b] dark:text-white">
+<td class="px-6 py-3">CUST-002</td><td class="px-6 py-3">Fatima Al-Otaibi</td><td class="px-6 py-3">Jeddah</td><td class="px-6 py-3">JED-S5</td><td class="px-6 py-3">-</td><td class="px-6 py-3">-</td><td class="px-6 py-3"><span class="bg-red-100 dark:bg-red-500/20 text-red-800 dark:text-red-400 text-xs font-medium px-2.5 py-0.5 rounded-full">Error</span></td>
+</tr>
+<tr class="bg-white dark:bg-background-dark/50 border-b dark:border-primary/20 text-[#100d1b] dark:text-white">
+<td class="px-6 py-3">CUST-003</td><td class="px-6 py-3">Khalid Al-Ghamdi</td><td class="px-6 py-3">Riyadh</td><td class="px-6 py-3">RYD-C2</td><td class="px-6 py-3">24.7136</td><td class="px-6 py-3">46.6753</td><td class="px-6 py-3"><span class="bg-green-100 dark:bg-green-500/20 text-green-800 dark:text-green-400 text-xs font-medium px-2.5 py-0.5 rounded-full">OK</span></td>
+</tr>
+<tr class="bg-blue-50 dark:bg-blue-500/10 border-b dark:border-primary/20 text-[#100d1b] dark:text-white">
+<td class="px-6 py-3">CUST-004</td><td class="px-6 py-3">Noura Al-Mutairi</td><td class="px-6 py-3">Dammam</td><td class="px-6 py-3">Unassigned</td><td class="px-6 py-3">26.4207</td><td class="px-6 py-3">50.0888</td><td class="px-6 py-3"><span class="bg-blue-100 dark:bg-blue-500/20 text-blue-800 dark:text-blue-400 text-xs font-medium px-2.5 py-0.5 rounded-full">New</span></td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="flex items-center justify-between p-4 bg-[#f6f6f8] dark:bg-background-dark/60 border-t dark:border-primary/20">
+<p class="text-sm font-medium text-[#594c9a] dark:text-gray-400">4 items selected</p>
+<div class="flex items-center gap-2">
+<button class="flex min-w-[84px] max-w-[480px] cursor-pointer items-center justify-center overflow-hidden rounded-lg h-9 px-4 bg-white dark:bg-primary/20 border border-gray-300 dark:border-primary/30 text-[#100d1b] dark:text-white gap-2 text-sm font-medium leading-normal">
+<span class="material-symbols-outlined text-lg">check_circle</span>
+<span class="truncate">Mark as Reviewed</span>
+</button>
+<button class="flex min-w-[84px] max-w-[480px] cursor-pointer items-center justify-center overflow-hidden rounded-lg h-9 px-4 bg-white dark:bg-primary/20 border border-gray-300 dark:border-primary/30 text-[#100d1b] dark:text-white gap-2 text-sm font-medium leading-normal">
+<span class="material-symbols-outlined text-lg">download</span>
+<span class="truncate">Export Selected</span>
+</button>
+</div>
+</div>
+</div>
+</div>
+</main>
+</div>
+</div>
+</body></html>

@@ -1,0 +1,27 @@
+{
+  "city": "Jeddah",
+  "method": "polar",
+  "assignments": {
+    "CS000021": "JED002",
+    "CS000023": "JED002",
+    "CS000025": "JED002",
+    "CS000026": "JED002",
+    "CS000027": "JED002",
+    "CS000029": "JED001"
+  },
+  "counts": [
+    {
+      "zone_id": "JED002",
+      "customer_count": 5
+    },
+    {
+      "zone_id": "JED001",
+      "customer_count": 1
+    }
+  ],
+  "metadata": {
+    "strategy": "polar",
+    "sector_size_degrees": 180.0,
+    "rotation_offset": 0.0
+  }
+}

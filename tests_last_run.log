@@ -1,0 +1,46 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-8.4.2, pluggy-1.6.0
+rootdir: /root/openai_projects/Binder_intelligent_zone_generator_v1
+configfile: pyproject.toml
+plugins: anyio-4.11.0
+collected 11 items
+
+tests/test_balancing.py .                                                [  9%]
+tests/test_integration.py ...                                            [ 36%]
+tests/test_persistence.py ..                                             [ 54%]
+tests/test_routing_service.py .                                          [ 63%]
+tests/test_routing_solver.py .                                           [ 72%]
+tests/test_zoning_service.py ...                                         [100%]
+
+=============================== warnings summary ===============================
+src/app/config.py:54
+  /root/openai_projects/Binder_intelligent_zone_generator_v1/src/app/config.py:54: PydanticDeprecatedSince20: Pydantic V1 style `@validator` validators are deprecated. You should migrate to Pydantic V2 style `@field_validator` validators, see the migration guide for more details. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.6/migration/
+    @validator("data_root", "customer_file", "dc_locations_file", pre=True)
+
+.venv/lib/python3.12/site-packages/pydantic/_internal/_config.py:272
+.venv/lib/python3.12/site-packages/pydantic/_internal/_config.py:272
+  /root/openai_projects/Binder_intelligent_zone_generator_v1/.venv/lib/python3.12/site-packages/pydantic/_internal/_config.py:272: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.6/migration/
+    warnings.warn(DEPRECATION_MESSAGE, DeprecationWarning)
+
+.venv/lib/python3.12/site-packages/pydantic/_internal/_generate_schema.py:263
+.venv/lib/python3.12/site-packages/pydantic/_internal/_generate_schema.py:263
+  /root/openai_projects/Binder_intelligent_zone_generator_v1/.venv/lib/python3.12/site-packages/pydantic/_internal/_generate_schema.py:263: PydanticDeprecatedSince20: `json_encoders` is deprecated. See https://docs.pydantic.dev/2.6/concepts/serialization/#custom-serializers for alternatives. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.6/migration/
+    warnings.warn(
+
+tests/test_integration.py::test_zoning_endpoint_polar
+tests/test_integration.py::test_routing_endpoint_optimize
+tests/test_integration.py::test_customer_locations_endpoint_supports_pagination
+  /root/openai_projects/Binder_intelligent_zone_generator_v1/.venv/lib/python3.12/site-packages/httpx/_client.py:680: DeprecationWarning: The 'app' shortcut is now deprecated. Use the explicit style 'transport=WSGITransport(app=...)' instead.
+    warnings.warn(message, DeprecationWarning)
+
+tests/test_integration.py::test_zoning_endpoint_polar
+tests/test_integration.py::test_routing_endpoint_optimize
+tests/test_persistence.py::test_file_storage_creates_run_directory
+tests/test_persistence.py::test_file_storage_writes_json_and_csv
+tests/test_routing_service.py::test_optimize_routes_persists_outputs
+tests/test_zoning_service.py::test_process_zoning_request_persists_outputs
+  /root/openai_projects/Binder_intelligent_zone_generator_v1/src/app/persistence/filesystem.py:22: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    timestamp = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+================== 11 passed, 14 warnings in 94.82s (0:01:34) ==================

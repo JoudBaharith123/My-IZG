@@ -1,0 +1,52 @@
+{
+  "city": "Jeddah",
+  "method": "polar",
+  "assignments": {
+    "CS000021": "JED002",
+    "CS000023": "JED002",
+    "CS000025": "JED001",
+    "CS000026": "JED001",
+    "CS000027": "JED002",
+    "CS000029": "JED001"
+  },
+  "counts": [
+    {
+      "zone_id": "JED002",
+      "customer_count": 3
+    },
+    {
+      "zone_id": "JED001",
+      "customer_count": 3
+    }
+  ],
+  "metadata": {
+    "strategy": "polar",
+    "sector_size_degrees": 180.0,
+    "rotation_offset": 0.0,
+    "balancing": {
+      "transfers": [
+        {
+          "customer_id": "CS000025",
+          "from_zone": "JED002",
+          "to_zone": "JED001",
+          "distance_km": 8.118539377530649
+        },
+        {
+          "customer_id": "CS000026",
+          "from_zone": "JED002",
+          "to_zone": "JED001",
+          "distance_km": 6.090363988500668
+        }
+      ],
+      "counts_before": {
+        "JED002": 5,
+        "JED001": 1
+      },
+      "counts_after": {
+        "JED002": 3,
+        "JED001": 3
+      },
+      "tolerance": 0.2
+    }
+  }
+}
