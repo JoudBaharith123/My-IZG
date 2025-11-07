@@ -2,8 +2,8 @@
 
 **Project:** Intelligent Zone Generator  
 **Company:** Binder's Business - Logistics & Distribution Intelligence  
-**Last Updated:** 2025-11-03 23:15:00 UTC
-**Auto-Updated By:** Codex on every change
+**Last Updated:** 2025-11-07 21:30:00 UTC
+**Auto-Updated By:** Claude on every change
 
 ---
 
@@ -270,9 +270,10 @@ Testing status will remain pending until automated and manual tests are created 
 
 ---
 
-## ًں“‌ Changelog
+## ًں"‌ Changelog
 
-- **2025-11-03 23:15:00** â€“ Enabled frontend-backend CORS, delivered live customer city endpoint, and documented the file upload workflow for UAT prep.
+- **2025-11-07 21:30:00** — Enhanced manual zone creation with Leaflet.draw integration: added interactive map-based polygon drawing with real-time customer counting, vertex editing, and draw/manual toggle mode. Created DrawableMap component and geometry utilities for point-in-polygon calculations.
+- **2025-11-03 23:15:00** â€" Enabled frontend-backend CORS, delivered live customer city endpoint, and documented the file upload workflow for UAT prep.
 - **2025-10-30 23:15:00** â€“ Manual zoning/routing test cases executed; sandbox datasets and OSRM stub process documented for manual validation.
 - **2025-10-29 21:45:20** â€“ OSRM health monitoring endpoints added; infrastructure/docs updated to leverage them.
 - **2025-10-29 21:28:40** â€“ Workload balancing implemented (service, schema updates, docs/tests) with optional post-zoning redistribution.

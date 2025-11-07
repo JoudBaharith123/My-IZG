@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
-import { AlertTriangle, Download, Plus, RefreshCw, Target, Trash2 } from 'lucide-react'
+import { AlertTriangle, Download, Map, Plus, RefreshCw, Target, Trash2, Type } from 'lucide-react'
 import { InteractiveMap, type MapPolygon } from '../../components/InteractiveMap'
+import { DrawableMap, type DrawnPolygon } from '../../components/DrawableMap'
 import { CITY_VIEWPORTS, DEFAULT_VIEWPORT } from '../../config/cityViewports'
 import { useCustomerCities } from '../../hooks/useCustomerCities'
 import { useCustomerLocations } from '../../hooks/useCustomerLocations'
 import { colorFromString } from '../../utils/color'
+import { countPointsInPolygon } from '../../utils/geometry'
 
 import {
   useGenerateZones,
@@ -459,7 +461,15 @@ export function ZoningWorkspacePage() {
             </Field>
           )}
 
-          {method === 'manual' && <ManualPolygonEditor polygons={manualPolygons} onChange={setManualPolygons} />}
+          {method === 'manual' && (
+            <ManualPolygonEditor
+              polygons={manualPolygons}
+              onChange={setManualPolygons}
+              city={city}
+              customerPoints={customerPoints}
+              mapViewport={mapViewport}
+            />
+          )}
 
           <div className="rounded-xl border border-primary/30 bg-primary/10 p-4 text-sm dark:border-primary/40 dark:bg-primary/20">
             <div className="flex items-center justify-between">
@@ -619,7 +629,45 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
   )
 }
 
-function ManualPolygonEditor({ polygons, onChange }: { polygons: ManualPolygonForm[]; onChange: (value: ManualPolygonForm[]) => void }) {
+function ManualPolygonEditor({
+  polygons,
+  onChange,
+  city,
+  customerPoints,
+  mapViewport,
+}: {
+  polygons: ManualPolygonForm[]
+  onChange: (value: ManualPolygonForm[]) => void
+  city: string
+  customerPoints: Array<{ customer_id: string; latitude: number; longitude: number; customer_name?: string; zone?: string }>
+  mapViewport: { center: [number, number]; zoom: number }
+}) {
+  const [entryMode, setEntryMode] = useState<'draw' | 'manual'>('draw')
+  const [drawnPolygons, setDrawnPolygons] = useState<DrawnPolygon[]>([])
+
+  // Calculate customer counts for each polygon
+  const polygonsWithCounts = useMemo(() => {
+    return polygons.map((polygon) => {
+      const coordinates = parsePolygonCoordinates(polygon.coordinates)
+      const count = coordinates.length >= 3 ? countPointsInPolygon(customerPoints, coordinates) : 0
+      return { ...polygon, customerCount: count }
+    })
+  }, [polygons, customerPoints])
+
+  // Update drawn polygons state for map visualization
+  useEffect(() => {
+    const drawn = polygonsWithCounts
+      .filter((p) => p.coordinates.trim())
+      .map((p) => ({
+        id: p.id,
+        coordinates: parsePolygonCoordinates(p.coordinates),
+        customerCount: p.customerCount,
+      }))
+      .filter((p) => p.coordinates.length >= 3)
+
+    setDrawnPolygons(drawn)
+  }, [polygonsWithCounts])
+
   const updatePolygon = (id: string, updates: Partial<ManualPolygonForm>) => {
     onChange(polygons.map((polygon) => (polygon.id === id ? { ...polygon, ...updates } : polygon)))
   }
@@ -635,49 +683,195 @@ function ManualPolygonEditor({ polygons, onChange }: { polygons: ManualPolygonFo
     ])
   }
 
+  const handlePolygonCreated = (coordinates: Array<[number, number]>) => {
+    const coordinatesStr = coordinates.map((coord) => `${coord[0].toFixed(5)},${coord[1].toFixed(5)}`).join('\n')
+    const newPolygon: ManualPolygonForm = {
+      id: createPolygonId(),
+      zoneId: 'MANUAL_' + String(polygons.length + 1).padStart(2, '0'),
+      coordinates: coordinatesStr,
+    }
+    onChange([...polygons, newPolygon])
+  }
+
+  const handlePolygonEdited = (_layerId: string, coordinates: Array<[number, number]>) => {
+    // Find polygon by matching coordinates (since layer IDs are internal to Leaflet)
+    const coordinatesStr = coordinates.map((coord) => `${coord[0].toFixed(5)},${coord[1].toFixed(5)}`).join('\n')
+
+    // Update the most recently added polygon (simple heuristic)
+    if (polygons.length > 0) {
+      const lastPolygonIndex = polygons.length - 1
+      updatePolygon(polygons[lastPolygonIndex].id, { coordinates: coordinatesStr })
+    }
+  }
+
+  const handlePolygonDeleted = (_layerId: string) => {
+    // Remove the last polygon when deleted (simple heuristic)
+    if (polygons.length > 0) {
+      removePolygon(polygons[polygons.length - 1].id)
+    }
+  }
+
+  // Prepare customer markers for the map
+  const customerMarkers = useMemo(() => {
+    return customerPoints.map((customer) => ({
+      id: customer.customer_id,
+      position: [customer.latitude, customer.longitude] as [number, number],
+      color: '#6b7280',
+      radius: 4,
+      tooltip: customer.customer_name ? `${customer.customer_name} - ${customer.customer_id}` : customer.customer_id,
+    }))
+  }, [customerPoints])
+
   return (
     <div className="space-y-3 rounded-lg border border-gray-200 bg-gray-50 p-3 text-sm dark:border-gray-700 dark:bg-gray-800/60">
       <div className="flex items-center justify-between">
         <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Manual polygons</p>
-        <button
-          type="button"
-          onClick={addPolygon}
-          className="inline-flex items-center gap-2 rounded-full border border-primary px-3 py-1 text-xs font-semibold text-primary transition hover:bg-primary/10 dark:border-primary-100 dark:text-primary-100 dark:hover:bg-primary/30"
-        >
-          <Plus className="h-3 w-3" /> Add polygon
-        </button>
-      </div>
-      {polygons.map((polygon) => (
-        <div key={polygon.id} className="space-y-2 rounded-lg border border-gray-200 bg-white p-3 shadow-sm dark:border-gray-700 dark:bg-gray-900/60">
-          <div className="flex items-center gap-2">
-            <input
-              type="text"
-              value={polygon.zoneId}
-              onChange={(event) => updatePolygon(polygon.id, { zoneId: event.target.value })}
-              className={inputClasses}
-              placeholder="Zone ID"
-            />
+        <div className="flex items-center gap-2">
+          {/* Mode toggle */}
+          <div className="flex gap-1 rounded-lg bg-white p-1 dark:bg-gray-900">
             <button
               type="button"
-              onClick={() => removePolygon(polygon.id)}
-              className="rounded-full p-2 text-gray-500 transition hover:bg-gray-100 hover:text-red-500 dark:hover:bg-gray-800"
-              disabled={polygons.length === 1}
+              onClick={() => setEntryMode('draw')}
+              className={
+                entryMode === 'draw'
+                  ? 'inline-flex items-center gap-1 rounded-md bg-primary px-2 py-1 text-xs font-semibold text-white'
+                  : 'inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-semibold text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800'
+              }
             >
-              <Trash2 className="h-4 w-4" />
+              <Map className="h-3 w-3" /> Draw
+            </button>
+            <button
+              type="button"
+              onClick={() => setEntryMode('manual')}
+              className={
+                entryMode === 'manual'
+                  ? 'inline-flex items-center gap-1 rounded-md bg-primary px-2 py-1 text-xs font-semibold text-white'
+                  : 'inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-semibold text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800'
+              }
+            >
+              <Type className="h-3 w-3" /> Manual
             </button>
           </div>
-          <textarea
-            value={polygon.coordinates}
-            onChange={(event) => updatePolygon(polygon.id, { coordinates: event.target.value })}
-            rows={4}
-            className="w-full rounded-lg border border-gray-300 bg-background-light px-3 py-2 text-xs text-gray-900 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/40 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
-            placeholder="21.60,39.10\n21.63,39.14\n21.58,39.18"
-          />
-          <p className="text-[11px] text-gray-400 dark:text-gray-500">Enter latitude,longitude per line (minimum three vertices).</p>
+
+          {entryMode === 'manual' && (
+            <button
+              type="button"
+              onClick={addPolygon}
+              className="inline-flex items-center gap-2 rounded-full border border-primary px-3 py-1 text-xs font-semibold text-primary transition hover:bg-primary/10 dark:border-primary-100 dark:text-primary-100 dark:hover:bg-primary/30"
+            >
+              <Plus className="h-3 w-3" /> Add polygon
+            </button>
+          )}
         </div>
-      ))}
+      </div>
+
+      {entryMode === 'draw' ? (
+        <div className="space-y-3">
+          {/* Drawing map */}
+          <DrawableMap
+            center={mapViewport.center}
+            zoom={mapViewport.zoom}
+            markers={customerMarkers}
+            drawnPolygons={drawnPolygons}
+            onPolygonCreated={handlePolygonCreated}
+            onPolygonEdited={handlePolygonEdited}
+            onPolygonDeleted={handlePolygonDeleted}
+            caption={`${city} - Draw polygons on map`}
+            className="h-[400px]"
+          />
+
+          {/* List of drawn polygons with customer counts */}
+          <div className="space-y-2">
+            {polygonsWithCounts.map((polygon) => (
+              <div
+                key={polygon.id}
+                className="flex items-center justify-between rounded-lg border border-gray-200 bg-white p-3 dark:border-gray-700 dark:bg-gray-900/60"
+              >
+                <div className="flex-1">
+                  <input
+                    type="text"
+                    value={polygon.zoneId}
+                    onChange={(event) => updatePolygon(polygon.id, { zoneId: event.target.value })}
+                    className="w-full rounded border-none bg-transparent px-0 py-0 text-sm font-semibold text-gray-900 focus:outline-none focus:ring-0 dark:text-white"
+                    placeholder="Zone ID"
+                  />
+                  <p className="text-xs text-gray-500 dark:text-gray-400">
+                    {polygon.customerCount} customer{polygon.customerCount !== 1 ? 's' : ''} •{' '}
+                    {parsePolygonCoordinates(polygon.coordinates).length} vertices
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => removePolygon(polygon.id)}
+                  className="rounded-full p-2 text-gray-500 transition hover:bg-gray-100 hover:text-red-500 dark:hover:bg-gray-800"
+                  disabled={polygons.length === 1}
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : (
+        // Manual entry mode (original textarea interface)
+        <div className="space-y-2">
+          {polygons.map((polygon) => (
+            <div key={polygon.id} className="space-y-2 rounded-lg border border-gray-200 bg-white p-3 shadow-sm dark:border-gray-700 dark:bg-gray-900/60">
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={polygon.zoneId}
+                  onChange={(event) => updatePolygon(polygon.id, { zoneId: event.target.value })}
+                  className={inputClasses}
+                  placeholder="Zone ID"
+                />
+                <button
+                  type="button"
+                  onClick={() => removePolygon(polygon.id)}
+                  className="rounded-full p-2 text-gray-500 transition hover:bg-gray-100 hover:text-red-500 dark:hover:bg-gray-800"
+                  disabled={polygons.length === 1}
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              </div>
+              <textarea
+                value={polygon.coordinates}
+                onChange={(event) => updatePolygon(polygon.id, { coordinates: event.target.value })}
+                rows={4}
+                className="w-full rounded-lg border border-gray-300 bg-background-light px-3 py-2 text-xs text-gray-900 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/40 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
+                placeholder="21.60,39.10\n21.63,39.14\n21.58,39.18"
+              />
+              <p className="text-[11px] text-gray-400 dark:text-gray-500">
+                Enter latitude,longitude per line (minimum three vertices). {polygonsWithCounts.find((p) => p.id === polygon.id)?.customerCount ?? 0}{' '}
+                customers in this polygon.
+              </p>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
+}
+
+// Helper function to parse coordinates from string
+function parsePolygonCoordinates(coordinatesStr: string): Array<[number, number]> {
+  const lines = coordinatesStr
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+
+  const coordinates: Array<[number, number]> = []
+  for (const line of lines) {
+    const parts = line.split(',')
+    if (parts.length === 2) {
+      const lat = Number(parts[0].trim())
+      const lon = Number(parts[1].trim())
+      if (Number.isFinite(lat) && Number.isFinite(lon)) {
+        coordinates.push([lat, lon])
+      }
+    }
+  }
+  return coordinates
 }
 
 function SummaryTable({ rows, hasResult }: { rows: SummaryRow[]; hasResult: boolean }) {
