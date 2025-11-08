@@ -66,11 +66,24 @@ function DrawControl({
         polygon: {
           allowIntersection: false,
           showArea: true,
+          repeatMode: false,
+          drawError: {
+            color: '#e1e100',
+            timeout: 2500,
+          },
           shapeOptions: {
             color: '#3b82f6',
             weight: 2,
             fillOpacity: 0.2,
           },
+          icon: new L.DivIcon({
+            iconSize: new L.Point(8, 8),
+            className: 'leaflet-div-icon leaflet-editing-icon',
+          }),
+          touchIcon: new L.DivIcon({
+            iconSize: new L.Point(20, 20),
+            className: 'leaflet-div-icon leaflet-editing-icon leaflet-touch-icon',
+          }),
         },
         polyline: false,
         rectangle: false,
@@ -243,9 +256,10 @@ export function DrawableMap({
       <div className="pointer-events-none absolute left-3 top-3 rounded-lg bg-blue-50/90 px-3 py-2 text-xs text-blue-800 shadow backdrop-blur dark:bg-blue-900/70 dark:text-blue-100">
         <p className="font-semibold">Drawing Tools:</p>
         <p>• Click polygon tool (top right) to start</p>
-        <p>• Click map to add vertices</p>
-        <p>• Double-click or click first point to finish</p>
-        <p>• Use edit tool to move vertices</p>
+        <p>• Click map to add vertices (add as many as you need)</p>
+        <p>• <strong>Double-click the last point</strong> to complete polygon</p>
+        <p>• Or click the first point to close the shape</p>
+        <p>• Use edit tool (✏️) to modify vertices after drawing</p>
       </div>
     </div>
   )

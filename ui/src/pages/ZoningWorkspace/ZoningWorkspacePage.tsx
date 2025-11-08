@@ -529,25 +529,6 @@ export function ZoningWorkspacePage() {
             </div>
           </div>
 
-          <div className="space-y-2">
-            <InteractiveMap center={mapViewport.center} zoom={mapViewport.zoom} caption={mapCaption} markers={zoneMarkers} polygons={polygonOverlays} />
-            {hasMoreCustomerPages ? (
-              <div className="flex flex-wrap items-center gap-3 text-xs text-gray-500 dark:text-gray-400">
-                <p>
-                  Displaying {customerPoints.length.toLocaleString()} of {customerTotal.toLocaleString()} customers for this selection.
-                </p>
-                <button
-                  type="button"
-                  onClick={() => fetchNextCustomerPage()}
-                  disabled={isFetchingMoreCustomers}
-                  className="inline-flex items-center rounded-full border border-gray-300 px-3 py-1 font-semibold text-gray-700 transition hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-70 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-800"
-                >
-                  {isFetchingMoreCustomers ? 'Loading…' : 'Load more'}
-                </button>
-              </div>
-            ) : null}
-          </div>
-
           <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 text-xs text-gray-600 dark:border-gray-700 dark:bg-gray-900/60 dark:text-gray-300">
             <p className="font-semibold text-gray-800 dark:text-gray-100">Last run</p>
             <p>{runMeta ? lastRunLabel + ' - ' + runMeta.durationSeconds.toString() + 's' : 'Not executed yet'}</p>
@@ -663,6 +644,23 @@ export function ZoningWorkspacePage() {
               className="h-[calc(100vh-12rem)]"
             />
           )}
+
+          {/* Customer count info */}
+          {hasMoreCustomerPages ? (
+            <div className="flex flex-wrap items-center gap-3 text-xs text-gray-500 dark:text-gray-400">
+              <p>
+                Displaying {customerPoints.length.toLocaleString()} of {customerTotal.toLocaleString()} customers for this selection.
+              </p>
+              <button
+                type="button"
+                onClick={() => fetchNextCustomerPage()}
+                disabled={isFetchingMoreCustomers}
+                className="inline-flex items-center rounded-full border border-gray-300 px-3 py-1 font-semibold text-gray-700 transition hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-70 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-800"
+              >
+                {isFetchingMoreCustomers ? 'Loading…' : 'Load more'}
+              </button>
+            </div>
+          ) : null}
         </section>
       </div>
     </div>
