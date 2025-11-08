@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
-import { AlertTriangle, Download, Plus, RefreshCw, Target, Trash2 } from 'lucide-react'
+import { AlertTriangle, Download, Edit3, Pencil, Plus, RefreshCw, Target, Trash2 } from 'lucide-react'
 import { InteractiveMap, type MapPolygon } from '../../components/InteractiveMap'
 import { DrawableMap } from '../../components/DrawableMap'
 import { CITY_VIEWPORTS, DEFAULT_VIEWPORT } from '../../config/cityViewports'
@@ -38,6 +38,9 @@ type ManualPolygonForm = {
   id: string
   zoneId: string
   coordinates: string
+  color?: string
+  isEditing?: boolean
+  isDrawing?: boolean
 }
 
 const inputClasses =
@@ -519,9 +522,8 @@ export function ZoningWorkspacePage() {
               </p>
             ) : null}
           </div>
-        </section>
 
-        <section className="space-y-5 rounded-2xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-800 dark:bg-background-dark/60">
+          {/* Results Section */}
           <div className="rounded-lg border border-yellow-200 bg-yellow-50/80 p-3 text-sm text-yellow-800 dark:border-yellow-500/40 dark:bg-yellow-500/10 dark:text-yellow-100">
             <div className="flex items-center gap-2">
               <AlertTriangle className="h-5 w-5" />
@@ -603,28 +605,48 @@ export function ZoningWorkspacePage() {
               zoom={mapViewport.zoom}
               markers={zoneMarkers}
               drawnPolygons={manualPolygons
-                .filter((p) => p.coordinates.trim())
-                .map((p) => ({
-                  id: p.id,
-                  coordinates: parsePolygonCoordinates(p.coordinates),
-                  customerCount: countPointsInPolygon(customerPoints, parsePolygonCoordinates(p.coordinates)),
-                }))
-                .filter((p) => p.coordinates.length >= 3)}
+                .map((p) => {
+                  const coords = parsePolygonCoordinates(p.coordinates)
+                  return {
+                    id: p.id,
+                    zoneId: p.zoneId,
+                    coordinates: coords,
+                    customerCount: coords.length >= 3 ? countPointsInPolygon(customerPoints, coords) : 0,
+                    color: p.color,
+                    isEditing: p.isEditing,
+                    isDrawing: p.isDrawing,
+                  }
+                })
+                .filter((p) => p.coordinates.length >= 3 || p.isDrawing)}
               onPolygonCreated={(coordinates) => {
                 const coordinatesStr = coordinates.map((coord) => `${coord[0].toFixed(5)},${coord[1].toFixed(5)}`).join('\n')
-                setManualPolygons([
-                  ...manualPolygons,
-                  { id: createPolygonId(), zoneId: 'MANUAL_' + String(manualPolygons.length + 1).padStart(2, '0'), coordinates: coordinatesStr },
-                ])
-              }}
-              onPolygonEdited={(_layerId, coordinates) => {
-                const coordinatesStr = coordinates.map((coord) => `${coord[0].toFixed(5)},${coord[1].toFixed(5)}`).join('\n')
-                if (manualPolygons.length > 0) {
-                  const lastIndex = manualPolygons.length - 1
+                // Find the polygon that's in drawing mode
+                const drawingPolygon = manualPolygons.find((p) => p.isDrawing)
+
+                if (drawingPolygon) {
+                  // Update the drawing polygon with coordinates and disable drawing mode
+                  console.log('📍 Assigning drawn polygon to', drawingPolygon.zoneId)
                   setManualPolygons(
-                    manualPolygons.map((p, idx) => (idx === lastIndex ? { ...p, coordinates: coordinatesStr } : p))
+                    manualPolygons.map((p) =>
+                      p.id === drawingPolygon.id
+                        ? { ...p, coordinates: coordinatesStr, isDrawing: false }
+                        : p
+                    )
                   )
+                } else {
+                  // Fallback: create new polygon if no drawing mode active
+                  setManualPolygons([
+                    ...manualPolygons,
+                    { id: createPolygonId(), zoneId: 'MANUAL_' + String(manualPolygons.length + 1).padStart(2, '0'), coordinates: coordinatesStr },
+                  ])
                 }
+              }}
+              onPolygonEdited={(polygonId, coordinates) => {
+                const coordinatesStr = coordinates.map((coord) => `${coord[0].toFixed(5)},${coord[1].toFixed(5)}`).join('\n')
+                console.log('📝 Updating polygon', polygonId, 'with new coordinates')
+                setManualPolygons(
+                  manualPolygons.map((p) => (p.id === polygonId ? { ...p, coordinates: coordinatesStr } : p))
+                )
               }}
               onPolygonDeleted={() => {
                 if (manualPolygons.length > 0) {
@@ -731,8 +753,16 @@ function ManualPolygonEditor({
             </p>
           </div>
         ) : (
-          polygons.map((polygon) => (
+          polygons.map((polygon) => {
+            const polygonData = polygonsWithCounts.find((p) => p.id === polygon.id)
+            const customerCount = polygonData?.customerCount ?? 0
+            const coordinates = parsePolygonCoordinates(polygon.coordinates)
+            const area = calculatePolygonArea(coordinates)
+            const polygonColor = polygon.color || '#3b82f6'
+
+            return (
             <div key={polygon.id} className="space-y-2 rounded-lg border border-gray-200 bg-white p-3 shadow-sm dark:border-gray-700 dark:bg-gray-900/60">
+              {/* Header with Zone ID and action buttons */}
               <div className="flex items-center gap-2">
                 <input
                   type="text"
@@ -740,29 +770,115 @@ function ManualPolygonEditor({
                   onChange={(event) => updatePolygon(polygon.id, { zoneId: event.target.value })}
                   className={inputClasses}
                   placeholder="Zone ID"
+                  readOnly={!polygon.isEditing}
+                  disabled={!polygon.isEditing}
                 />
+                <button
+                  type="button"
+                  onClick={() => {
+                    console.log('🔘 Draw button clicked! Polygon:', polygon.id, 'isDrawing:', polygon.isDrawing, 'coordinates:', polygon.coordinates)
+                    // If activating drawing, disable drawing on all other polygons
+                    if (!polygon.isDrawing) {
+                      console.log('🖍️ Activating drawing mode for polygon:', polygon.id)
+                      const updated = polygons.map((p) =>
+                        p.id === polygon.id
+                          ? { ...p, isDrawing: true, isEditing: false }
+                          : { ...p, isDrawing: false }
+                      )
+                      console.log('📋 Updated polygons:', updated)
+                      onChange(updated)
+                    } else {
+                      console.log('🛑 Deactivating drawing mode for polygon:', polygon.id)
+                      updatePolygon(polygon.id, { isDrawing: false })
+                    }
+                  }}
+                  disabled={polygon.coordinates.trim() !== ''}
+                  className={`rounded-full p-2 transition ${
+                    polygon.coordinates.trim() !== ''
+                      ? 'cursor-not-allowed text-gray-300 dark:text-gray-600'
+                      : polygon.isDrawing
+                      ? 'bg-green-100 text-green-600 dark:bg-green-900/40 dark:text-green-300'
+                      : 'text-gray-500 hover:bg-gray-100 hover:text-green-500 dark:hover:bg-gray-800'
+                  }`}
+                  title={
+                    polygon.coordinates.trim() !== ''
+                      ? "Polygon already drawn"
+                      : polygon.isDrawing
+                      ? "Stop drawing"
+                      : "Draw this polygon"
+                  }
+                >
+                  <Pencil className="h-4 w-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => updatePolygon(polygon.id, { isEditing: !polygon.isEditing })}
+                  disabled={polygon.coordinates.trim() === ''}
+                  className={`rounded-full p-2 transition ${
+                    polygon.coordinates.trim() === ''
+                      ? 'cursor-not-allowed text-gray-300 dark:text-gray-600'
+                      : polygon.isEditing
+                      ? 'bg-blue-100 text-blue-600 dark:bg-blue-900/40 dark:text-blue-300'
+                      : 'text-gray-500 hover:bg-gray-100 hover:text-blue-500 dark:hover:bg-gray-800'
+                  }`}
+                  title={
+                    polygon.coordinates.trim() === ''
+                      ? "No polygon to edit"
+                      : polygon.isEditing
+                      ? "Stop editing"
+                      : "Edit this polygon"
+                  }
+                >
+                  <Edit3 className="h-4 w-4" />
+                </button>
                 <button
                   type="button"
                   onClick={() => removePolygon(polygon.id)}
                   className="rounded-full p-2 text-gray-500 transition hover:bg-gray-100 hover:text-red-500 dark:hover:bg-gray-800"
                   disabled={polygons.length === 1}
+                  title="Delete polygon"
                 >
                   <Trash2 className="h-4 w-4" />
                 </button>
               </div>
+
+              {/* Color picker and stats */}
+              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2">
+                  <label className="text-xs font-medium text-gray-600 dark:text-gray-400">Color:</label>
+                  <input
+                    type="color"
+                    value={polygonColor}
+                    onChange={(event) => updatePolygon(polygon.id, { color: event.target.value })}
+                    className={`h-8 w-12 rounded border border-gray-300 dark:border-gray-600 ${
+                      polygon.isEditing ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'
+                    }`}
+                    title={polygon.isEditing ? "Choose polygon color" : "Enable edit mode to change color"}
+                    disabled={!polygon.isEditing}
+                  />
+                </div>
+                <div className="flex-1 text-xs text-gray-600 dark:text-gray-400">
+                  <span className="font-semibold">{customerCount}</span> customers •{' '}
+                  <span className="font-semibold">{area.toFixed(2)}</span> km²
+                </div>
+              </div>
+
+              {/* Coordinates textarea */}
               <textarea
                 value={polygon.coordinates}
                 onChange={(event) => updatePolygon(polygon.id, { coordinates: event.target.value })}
                 rows={4}
                 className="w-full rounded-lg border border-gray-300 bg-background-light px-3 py-2 text-xs text-gray-900 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/40 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
-                placeholder="21.60,39.10\n21.63,39.14\n21.58,39.18"
+                placeholder="Lat,Lon (one per line)"
+                readOnly={!polygon.isEditing}
+                disabled={!polygon.isEditing}
               />
               <p className="text-[11px] text-gray-400 dark:text-gray-500">
-                Enter latitude,longitude per line (minimum three vertices). {polygonsWithCounts.find((p) => p.id === polygon.id)?.customerCount ?? 0}{' '}
-                customers in this polygon.
+                Enter latitude,longitude per line (minimum three vertices)
               </p>
             </div>
-          ))
+            )
+          })
         )}
       </div>
     </div>
@@ -788,6 +904,36 @@ function parsePolygonCoordinates(coordinatesStr: string): Array<[number, number]
     }
   }
   return coordinates
+}
+
+// Calculate polygon area in km² using the Haversine formula
+function calculatePolygonArea(coordinates: Array<[number, number]>): number {
+  if (coordinates.length < 3) return 0
+
+  // Earths radius in kilometers
+  const EARTH_RADIUS_KM = 6371
+
+  // Convert degrees to radians
+  const toRadians = (degrees: number) => (degrees * Math.PI) / 180
+
+  // Calculate area using spherical excess formula
+  let area = 0
+  const numPoints = coordinates.length
+
+  for (let i = 0; i < numPoints; i++) {
+    const [lat1, lon1] = coordinates[i]
+    const [lat2, lon2] = coordinates[(i + 1) % numPoints]
+
+    const lat1Rad = toRadians(lat1)
+    const lat2Rad = toRadians(lat2)
+    const lon1Rad = toRadians(lon1)
+    const lon2Rad = toRadians(lon2)
+
+    area += (lon2Rad - lon1Rad) * (2 + Math.sin(lat1Rad) + Math.sin(lat2Rad))
+  }
+
+  area = Math.abs((area * EARTH_RADIUS_KM * EARTH_RADIUS_KM) / 2)
+  return area
 }
 
 function SummaryTable({ rows, hasResult }: { rows: SummaryRow[]; hasResult: boolean }) {
