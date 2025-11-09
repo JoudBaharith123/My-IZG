@@ -3,6 +3,7 @@ import type { ReactNode } from 'react'
 import { AlertTriangle, Download, Edit3, Pencil, Plus, RefreshCw, Target, Trash2 } from 'lucide-react'
 import { InteractiveMap, type MapPolygon } from '../../components/InteractiveMap'
 import { DrawableMap } from '../../components/DrawableMap'
+import { FilterPanel } from '../../components/FilterPanel'
 import { CITY_VIEWPORTS, DEFAULT_VIEWPORT } from '../../config/cityViewports'
 import { useCustomerCities } from '../../hooks/useCustomerCities'
 import { useCustomerLocations } from '../../hooks/useCustomerLocations'
@@ -51,6 +52,7 @@ const defaultPolygons: ManualPolygonForm[] = [
 ]
 
 const FALLBACK_CITIES = ['Jeddah', 'Riyadh', 'Dammam']
+const ALL_CITIES_VALUE = 'all'
 
 export function ZoningWorkspacePage() {
   const [city, setCity] = useState('')
@@ -65,14 +67,21 @@ export function ZoningWorkspacePage() {
   const [result, setResult] = useState<GenerateZonesResponse | null>(null)
   const [lastError, setLastError] = useState<string | null>(null)
   const [runMeta, setRunMeta] = useState<{ durationSeconds: number; timestamp: string } | null>(null)
+  const [activeFilters, setActiveFilters] = useState<Record<string, string>>({})
 
   const { mutateAsync: generateZones, isPending, isError } = useGenerateZones()
   const { data: cityCatalog } = useCustomerCities()
   const cityOptions = useMemo(() => {
+    const cities: string[] = []
+    // Add "All Cities" as first option
+    cities.push(ALL_CITIES_VALUE)
+
     if (cityCatalog?.length) {
-      return cityCatalog.map((entry) => entry.name)
+      cities.push(...cityCatalog.map((entry) => entry.name))
+    } else {
+      cities.push(...FALLBACK_CITIES)
     }
-    return [...FALLBACK_CITIES]
+    return cities
   }, [cityCatalog])
 
   useEffect(() => {
@@ -93,7 +102,12 @@ export function ZoningWorkspacePage() {
     hasNextPage: hasMoreCustomerPages,
     fetchNextPage: fetchNextCustomerPage,
     isFetchingNextPage: isFetchingMoreCustomers,
-  } = useCustomerLocations({ city, pageSize: 1500, enabled: Boolean(city) })
+  } = useCustomerLocations({
+    city: city || ALL_CITIES_VALUE,
+    filters: activeFilters,
+    pageSize: 1500,
+    enabled: Boolean(city)
+  })
 
   const mapViewport = useMemo(() => {
     return CITY_VIEWPORTS[city] ?? DEFAULT_VIEWPORT
@@ -214,7 +228,8 @@ export function ZoningWorkspacePage() {
     if (!city) {
       return 'Select a city to view customers'
     }
-    return city + ' - ' + lastRunLabel
+    const cityLabel = city === ALL_CITIES_VALUE ? 'All Cities' : city
+    return cityLabel + ' - ' + lastRunLabel
   }, [city, lastRunLabel])
 
   const zoneMarkers = useMemo(() => {
@@ -222,6 +237,9 @@ export function ZoningWorkspacePage() {
       return []
     }
     const assignments = result?.assignments ?? {}
+    // Use smaller markers for large datasets
+    const markerRadius = customerPoints.length > 2000 ? 3 : customerPoints.length > 1000 ? 4 : 6
+
     return customerPoints.map((customer) => {
       const assignedZone = assignments[customer.customer_id] ?? customer.zone ?? 'Unassigned'
       const markerColor =
@@ -238,6 +256,7 @@ export function ZoningWorkspacePage() {
         id: customer.customer_id,
         position: [customer.latitude, customer.longitude] as [number, number],
         color: markerColor,
+        radius: markerRadius,
         tooltip: `${nameParts.join(' - ')} - ${assignedZone}`,
       }
     })
@@ -265,6 +284,10 @@ export function ZoningWorkspacePage() {
     setLastError(null)
     if (!city) {
       setLastError('Select a city before generating zones.')
+      return
+    }
+    if (city === ALL_CITIES_VALUE) {
+      setLastError('Cannot generate zones for "All Cities". Please select a specific city.')
       return
     }
     const payload: GenerateZonesPayload = {
@@ -358,27 +381,37 @@ export function ZoningWorkspacePage() {
       </header>
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,360px)_minmax(0,1fr)]">
-        <section className="space-y-5 rounded-2xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-800 dark:bg-background-dark/60">
-          <Field label="City">
-            <select
-              value={city}
-              onChange={(event) => setCity(event.target.value)}
-              className={inputClasses}
-              disabled={!cityOptions.length}
-            >
-              {cityOptions.length ? (
-                cityOptions.map((option) => (
-                  <option key={option} value={option}>
-                    {option}
-                  </option>
-                ))
-              ) : (
-                <option value="">No cities detected</option>
-              )}
-            </select>
-          </Field>
+        <div className="space-y-5">
+          <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-800 dark:bg-background-dark/60 space-y-5">
+            <Field label="City">
+              <select
+                value={city}
+                onChange={(event) => setCity(event.target.value)}
+                className={inputClasses}
+                disabled={!cityOptions.length}
+              >
+                {cityOptions.length ? (
+                  cityOptions.map((option) => (
+                    <option key={option} value={option}>
+                      {option === ALL_CITIES_VALUE ? 'All Cities' : option}
+                    </option>
+                  ))
+                ) : (
+                  <option value="">No cities detected</option>
+                )}
+              </select>
+            </Field>
+          </section>
 
-          <Field label="Target zones">
+          <FilterPanel
+            onFiltersChange={setActiveFilters}
+            activeFilters={activeFilters}
+            customerCount={customerPoints.length}
+            totalCustomers={customerTotal}
+          />
+
+          <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-800 dark:bg-background-dark/60 space-y-5">
+            <Field label="Target zones">
             <input
               type="number"
               min={1}
@@ -593,12 +626,37 @@ export function ZoningWorkspacePage() {
               >
                 Transfers (CSV)
               </DownloadButton>
+              <DownloadButton
+                disabled={!result}
+                onClick={() => {
+                  if (result && polygonOverlays.length > 0) {
+                    const geojson = buildGeoJSON(polygonOverlays, result, city, result.method)
+                    downloadJson(geojson, 'zones_' + result.method + '_' + city + '.geojson')
+                  }
+                }}
+              >
+                GeoJSON
+              </DownloadButton>
             </div>
           </div>
         </section>
+        </div>
 
         {/* Main map area - right column */}
         <section className="space-y-4 rounded-2xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-800 dark:bg-background-dark/60">
+          {/* Warning for large dataset */}
+          {city === ALL_CITIES_VALUE && customerTotal > 5000 && (
+            <div className="flex items-center gap-3 rounded-lg border border-yellow-200 bg-yellow-50 px-4 py-3 text-sm text-yellow-800 dark:border-yellow-500/30 dark:bg-yellow-500/10 dark:text-yellow-200">
+              <AlertTriangle className="h-5 w-5" />
+              <div>
+                <p className="font-semibold">Large dataset detected ({customerTotal.toLocaleString()} customers)</p>
+                <p className="text-xs">
+                  For better performance, select a specific city. Currently showing first {customerPoints.length.toLocaleString()} customers.
+                </p>
+              </div>
+            </div>
+          )}
+
           {method === 'manual' ? (
             <DrawableMap
               center={mapViewport.center}
@@ -1072,4 +1130,56 @@ function buildTransfersCsv(rows: TransferRow[]) {
   const header = 'CustomerId,FromZone,ToZone,DistanceKm'
   const csvRows = rows.map((row) => row.customer + ',' + row.fromZone + ',' + row.toZone + ',' + row.distance.replace(' km', ''))
   return [header, ...csvRows].join('\n')
+}
+
+function buildGeoJSON(
+  polygons: MapPolygon[],
+  result: GenerateZonesResponse,
+  city: string,
+  method: string
+): unknown[] {
+  return polygons.map((polygon, index) => {
+    const zoneId = polygon.id.replace('-polygon', '')
+    const coordinates = polygon.positions.map((pos) => `${pos[1]} ${pos[0]}`).join(',')
+    const wkt = `POLYGON((${coordinates}))`
+
+    // Calculate centroid
+    const lats = polygon.positions.map((pos) => pos[0])
+    const lons = polygon.positions.map((pos) => pos[1])
+    const centroidLat = lats.reduce((a, b) => a + b, 0) / lats.length
+    const centroidLon = lons.reduce((a, b) => a + b, 0) / lons.length
+
+    const customerCount = result.counts?.find((c) => c.zone_id === zoneId)?.customer_count || 0
+
+    return {
+      id: crypto.randomUUID(),
+      name: zoneId,
+      group: city.toUpperCase(),
+      featureClass: '2',
+      wkt,
+      json: JSON.stringify({
+        type: method,
+        subType: null,
+        labelPoint: { _x: centroidLon, _y: centroidLat },
+      }),
+      visible: true,
+      symbology: {
+        fillColor: polygon.fillColor || polygon.color,
+        fillOpacity: 0.33,
+        lineColor: 'black',
+        lineWidth: 2,
+        lineOpacity: 0.5,
+        scale: null,
+      },
+      styledGeom: null,
+      notes: `tag : ${city.toUpperCase()}|${zoneId}\ngroup : ${city.toUpperCase()}\nname : ${zoneId}\nmethod : ${method}\ncustomers : ${customerCount}\n`,
+      nodeTags: [],
+      nameTagPlacementPoint: null,
+      simplificationMeters: 0,
+      modifiedTimestamp: 0,
+      managerId: null,
+      collapsed: true,
+      locked: null,
+    }
+  })
 }

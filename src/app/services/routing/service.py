@@ -15,6 +15,7 @@ from ...schemas.routing import (
     RoutingResponse,
 )
 from ..outputs.routing_formatter import routing_result_to_csv, routing_result_to_json
+from ..export.geojson import export_routes_to_easyterritory, save_easyterritory_json
 from .models import RoutePlan, RoutingResult
 from .osrm_client import OSRMClient, build_coordinate_list
 from .solver import SolverConstraints, solve_vrp
@@ -119,6 +120,19 @@ def optimize_routes(payload: RoutingRequest) -> RoutingResponse:
         run_dir = storage.make_run_directory(prefix=f"routes_{payload.zone_id}")
         storage.write_json(run_dir / "summary.json", routing_result_to_json(routing_result))
         storage.write_csv(run_dir / "assignments.csv", routing_result_to_csv(routing_result))
+
+        # Export to EasyTerritory GeoJSON format
+        try:
+            easyterritory_features = export_routes_to_easyterritory(
+                routes_response=response.model_dump(),
+                city=payload.city,
+                zone=payload.zone_id,
+            )
+            save_easyterritory_json(easyterritory_features, run_dir / "routes.geojson")
+        except Exception as exc:
+            # Log error but don't fail the entire request
+            import logging
+            logging.warning(f"Failed to generate GeoJSON export: {exc}")
 
     return response
 

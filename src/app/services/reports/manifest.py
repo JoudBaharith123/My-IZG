@@ -191,7 +191,7 @@ def _build_file_record(file_path: Path, run_dir: Path, run_summary: dict) -> dic
         "tags": list(run_summary.get("tags") or []),
         "notes": run_summary.get("notes"),
         "description": description,
-        "download_path": f"/api/reports/exports/{run_id}/{file_path.name}",
+        "download_path": f"/reports/exports/{run_id}/{file_path.name}",
     }
 
 

@@ -35,23 +35,23 @@ def load_customers(source: Optional[Path] = None) -> tuple[Customer, ...]:
         if not reader.fieldnames:
             raise ValueError(f"Customer file '{csv_path}' is missing a header row.")
         for row in reader:
-            lat = _coerce_float(row.get("Latitude"))
-            lon = _coerce_float(row.get("Longitude"))
+            lat = _coerce_float(row.get("Latitude") or row.get("latitude"))
+            lon = _coerce_float(row.get("Longitude") or row.get("longitude"))
             if lat is None or lon is None:
                 continue  # ignore records without coordinates
             customers.append(
                 Customer(
-                    area=(row.get("Area") or "").strip() or None,
-                    region=(row.get("Region") or "").strip() or None,
-                    city=(row.get("City") or "").strip() or None,
-                    zone=(row.get("Zone") or "").strip() or None,
-                    agent_id=(row.get("AgentId") or "").strip() or None,
-                    agent_name=(row.get("AgentName") or "").strip() or None,
-                    customer_id=(row.get("CusId") or row.get("CustomerId") or "").strip(),
-                    customer_name=(row.get("CusName") or row.get("CustomerName") or "").strip(),
+                    area=(row.get("Area") or row.get("area") or "").strip() or None,
+                    region=(row.get("Region") or row.get("region") or "").strip() or None,
+                    city=(row.get("City") or row.get("city") or "").strip() or None,
+                    zone=(row.get("Zone") or row.get("zone") or "").strip() or None,
+                    agent_id=(row.get("AgentId") or row.get("agent_id") or "").strip() or None,
+                    agent_name=(row.get("AgentName") or row.get("agent_name") or "").strip() or None,
+                    customer_id=(row.get("CusId") or row.get("customer_id") or row.get("CustomerId") or "").strip(),
+                    customer_name=(row.get("CusName") or row.get("customer_name") or row.get("CustomerName") or "").strip(),
                     latitude=lat,
                     longitude=lon,
-                    status=(row.get("Status") or "").strip() or None,
+                    status=(row.get("Status") or row.get("status") or "").strip() or None,
                     raw=row,
                 )
             )

@@ -57,4 +57,27 @@ def download_export_file(
   except FileNotFoundError as exc:
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
-  return FileResponse(path=file_path, filename=file_path.name)
+  # Determine media type based on file extension
+  media_type = _get_media_type(file_path)
+
+  return FileResponse(
+    path=file_path,
+    filename=file_path.name,
+    media_type=media_type,
+    headers={"Content-Disposition": f'attachment; filename="{file_path.name}"'},
+  )
+
+
+def _get_media_type(file_path) -> str:
+  """Determine MIME type based on file extension."""
+  suffix = file_path.suffix.lower()
+  mime_types = {
+    ".csv": "text/csv",
+    ".json": "application/json",
+    ".geojson": "application/geo+json",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".pdf": "application/pdf",
+    ".txt": "text/plain",
+    ".zip": "application/zip",
+  }
+  return mime_types.get(suffix, "application/octet-stream")

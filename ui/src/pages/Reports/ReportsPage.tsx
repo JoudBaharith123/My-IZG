@@ -1,6 +1,6 @@
 ﻿import { useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
-import { CalendarDays, Clock, Database, Download, Search, Share2 } from 'lucide-react'
+import { CalendarDays, Clock, Database, Download, Search, Share2, AlertCircle, CheckCircle } from 'lucide-react'
 
 import { useReportExports } from '../../hooks/useReportExports'
 import type { ReportExport } from '../../hooks/useReportExports'
@@ -13,6 +13,7 @@ const ALL_FILTER = 'All'
 export function ReportsPage() {
   const { data: exportsData = [], isLoading: exportsLoading } = useReportExports()
   const { data: runsData = [], isLoading: runsLoading } = useReportRuns()
+  const [downloadStatus, setDownloadStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
 
   const fileFilters = useMemo(() => {
     const filters = new Set<string>([ALL_FILTER])
@@ -61,7 +62,18 @@ export function ReportsPage() {
 
   const downloadReport = useDownloadReport((item) => {
     console.info('report-download', { id: item.id, fileName: item.fileName, runId: item.runId })
+    setDownloadStatus({ type: 'success', message: `Downloaded: ${item.fileName}` })
+    setTimeout(() => setDownloadStatus(null), 5000)
   })
+
+  // Handle download errors
+  useEffect(() => {
+    if (downloadReport.isError) {
+      const errorMessage = downloadReport.error?.message || 'Download failed. Please try again.'
+      setDownloadStatus({ type: 'error', message: errorMessage })
+      setTimeout(() => setDownloadStatus(null), 5000)
+    }
+  }, [downloadReport.isError, downloadReport.error])
 
   return (
     <div className="flex flex-col gap-6">
@@ -76,6 +88,19 @@ export function ReportsPage() {
           <Database className="h-4 w-4" /> Open export directory
         </button>
       </header>
+
+      {downloadStatus && (
+        <div
+          className={`flex items-center gap-3 rounded-lg border px-4 py-3 text-sm ${
+            downloadStatus.type === 'success'
+              ? 'border-green-200 bg-green-50 text-green-800 dark:border-green-500/30 dark:bg-green-500/10 dark:text-green-200'
+              : 'border-red-200 bg-red-50 text-red-800 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-200'
+          }`}
+        >
+          {downloadStatus.type === 'success' ? <CheckCircle className="h-5 w-5" /> : <AlertCircle className="h-5 w-5" />}
+          <p>{downloadStatus.message}</p>
+        </div>
+      )}
 
       <div className="flex flex-col gap-4 rounded-2xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-800 dark:bg-background-dark/60">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">

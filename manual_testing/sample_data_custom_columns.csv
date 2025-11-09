@@ -1,0 +1,11 @@
+ID,Name,Lat,Lon,Town,Area_Code,Status,Contact
+12345,Al Salam Grocery,21.5429,39.1982,Jeddah,JED_NORTH_01,Active,555-0101
+12346,Al Noor Supermarket,24.7136,46.6753,Riyadh,RYD_CENTRAL_02,Active,555-0102
+12347,Al Bahar Trading,26.3927,50.0778,Dammam,DMM_EAST_01,Active,555-0103
+12348,Golden Market,21.4858,39.1925,Jeddah,JED_SOUTH_02,Pending,555-0104
+12349,City Center Store,24.6877,46.7219,Riyadh,RYD_WEST_01,Active,555-0105
+12350,Coastal Mart,21.5815,39.1316,Jeddah,JED_WEST_03,Active,555-0106
+12351,Metro Supplies,24.7744,46.6389,Riyadh,RYD_NORTH_03,Active,555-0107
+12352,Harbor Goods,26.4207,50.0888,Dammam,DMM_PORT_02,Inactive,555-0108
+12353,Desert Traders,21.5234,39.2092,Jeddah,JED_EAST_01,Active,555-0109
+12354,Royal Shop,24.6641,46.7556,Riyadh,RYD_SOUTH_02,Active,555-0110
