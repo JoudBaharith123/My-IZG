@@ -23,6 +23,7 @@ export type CustomerLocationsResult = {
 type UseCustomerLocationsArgs = {
   city?: string | null
   zone?: string | null
+  filters?: Record<string, string> | null
   pageSize?: number
   enabled?: boolean
 }
@@ -35,11 +36,11 @@ type ApiResponse = {
   has_next_page: boolean
 }
 
-export function useCustomerLocations({ city, zone, pageSize = 1500, enabled = true }: UseCustomerLocationsArgs) {
+export function useCustomerLocations({ city, zone, filters, pageSize = 1500, enabled = true }: UseCustomerLocationsArgs) {
   const normalizedCity = city?.trim()
   const normalizedZone = zone?.trim()
   const query = useInfiniteQuery({
-    queryKey: ['customer-locations', normalizedCity ?? 'ALL', normalizedZone ?? 'ALL', pageSize],
+    queryKey: ['customer-locations', normalizedCity ?? 'ALL', normalizedZone ?? 'ALL', filters ?? {}, pageSize],
     queryFn: async ({ pageParam = 1 }): Promise<CustomerLocationsResult> => {
       const params: Record<string, string> = {
         page: String(pageParam),
@@ -50,6 +51,19 @@ export function useCustomerLocations({ city, zone, pageSize = 1500, enabled = tr
       }
       if (normalizedZone) {
         params.zone = normalizedZone
+      }
+      // Add additional filters
+      if (filters) {
+        Object.entries(filters).forEach(([key, value]) => {
+          if (value) {
+            // Normalize filter keys: AgentName -> agent_name, AgentId -> agent_id
+            const normalizedKey = key
+              .replace(/([A-Z])/g, '_$1')
+              .toLowerCase()
+              .replace(/^_/, '')
+            params[normalizedKey] = value
+          }
+        })
       }
       const { data } = await apiClient.get<ApiResponse>('/customers/locations', {
         params,

@@ -123,14 +123,40 @@ def list_customer_locations(
     city: Optional[str] = None,
     zone: Optional[str] = None,
     *,
+    filters: Optional[dict[str, str]] = None,
     offset: int = 0,
     limit: Optional[int] = None,
 ) -> Tuple[list[dict], int]:
-    """Return customer coordinates, filtered by city and/or zone, with pagination support."""
+    """Return customer coordinates, filtered by city and/or zone, with pagination support.
+
+    Special values:
+    - city="all" or zone="all" will return all customers (no filtering)
+
+    Args:
+        city: Optional city filter
+        zone: Optional zone filter
+        filters: Optional dictionary of additional filters (e.g., {"status": "ACTIVE", "agent_name": "John"})
+        offset: Number of records to skip
+        limit: Maximum number of records to return
+    """
 
     customers = load_customers()
-    normalized_city = city.strip().lower() if isinstance(city, str) and city.strip() else None
-    normalized_zone = zone.strip().lower() if isinstance(zone, str) and zone.strip() else None
+
+    # Handle "all" as a special value meaning no filter
+    normalized_city = None
+    if isinstance(city, str) and city.strip() and city.strip().lower() != "all":
+        normalized_city = city.strip().lower()
+
+    normalized_zone = None
+    if isinstance(zone, str) and zone.strip() and zone.strip().lower() != "all":
+        normalized_zone = zone.strip().lower()
+
+    # Normalize additional filters
+    normalized_filters = {}
+    if filters:
+        for key, value in filters.items():
+            if value and isinstance(value, str):
+                normalized_filters[key.lower()] = value.strip().lower()
 
     results: list[dict] = []
     matched_total = 0
@@ -140,6 +166,21 @@ def list_customer_locations(
         if normalized_zone:
             zone_value = (customer.zone or "").strip().lower()
             if zone_value != normalized_zone:
+                continue
+
+        # Apply additional filters
+        if normalized_filters:
+            skip_customer = False
+            for filter_key, filter_value in normalized_filters.items():
+                customer_value = getattr(customer, filter_key, None)
+                if customer_value is None:
+                    skip_customer = True
+                    break
+                customer_value_normalized = str(customer_value).strip().lower()
+                if customer_value_normalized != filter_value:
+                    skip_customer = True
+                    break
+            if skip_customer:
                 continue
 
         matched_total += 1

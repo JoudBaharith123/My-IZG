@@ -10,6 +10,7 @@ from ...data.customers_repository import get_customers_for_location, resolve_dep
 from ...persistence.filesystem import FileStorage
 from ..balancing.service import balance_assignments
 from ..outputs.formatter import zoning_response_to_csv, zoning_response_to_json
+from ..export.geojson import export_zones_to_easyterritory, save_easyterritory_json
 from ...models.domain import Customer
 from ...schemas.zoning import ZoningRequest, ZoningResponse, ZoneCount
 from .dispatcher import get_strategy
@@ -120,6 +121,19 @@ def process_zoning_request(payload: ZoningRequest, *, persist: bool = True) -> Z
         customers = list(customers)  # ensure we have a concrete sequence for serialization
         storage.write_json(run_dir / "summary.json", zoning_response_to_json(response))
         storage.write_csv(run_dir / "assignments.csv", zoning_response_to_csv(response, customers))
+
+        # Export to EasyTerritory GeoJSON format
+        try:
+            easyterritory_features = export_zones_to_easyterritory(
+                zones_response=response.model_dump(),
+                city=payload.city,
+                method=payload.method,
+            )
+            save_easyterritory_json(easyterritory_features, run_dir / "zones.geojson")
+        except Exception as exc:
+            # Log error but don't fail the entire request
+            import logging
+            logging.warning(f"Failed to generate GeoJSON export: {exc}")
 
     return response
 

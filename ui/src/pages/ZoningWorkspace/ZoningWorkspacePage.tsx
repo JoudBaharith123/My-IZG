@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
-import { AlertTriangle, Download, Plus, RefreshCw, Target, Trash2 } from 'lucide-react'
+import { AlertTriangle, Download, Edit3, Pencil, Plus, RefreshCw, Target, Trash2 } from 'lucide-react'
 import { InteractiveMap, type MapPolygon } from '../../components/InteractiveMap'
+import { DrawableMap } from '../../components/DrawableMap'
+import { FilterPanel } from '../../components/FilterPanel'
 import { CITY_VIEWPORTS, DEFAULT_VIEWPORT } from '../../config/cityViewports'
 import { useCustomerCities } from '../../hooks/useCustomerCities'
 import { useCustomerLocations } from '../../hooks/useCustomerLocations'
 import { colorFromString } from '../../utils/color'
+import { countPointsInPolygon } from '../../utils/geometry'
 
 import {
   useGenerateZones,
@@ -36,6 +39,9 @@ type ManualPolygonForm = {
   id: string
   zoneId: string
   coordinates: string
+  color?: string
+  isEditing?: boolean
+  isDrawing?: boolean
 }
 
 const inputClasses =
@@ -46,6 +52,7 @@ const defaultPolygons: ManualPolygonForm[] = [
 ]
 
 const FALLBACK_CITIES = ['Jeddah', 'Riyadh', 'Dammam']
+const ALL_CITIES_VALUE = 'all'
 
 export function ZoningWorkspacePage() {
   const [city, setCity] = useState('')
@@ -60,14 +67,21 @@ export function ZoningWorkspacePage() {
   const [result, setResult] = useState<GenerateZonesResponse | null>(null)
   const [lastError, setLastError] = useState<string | null>(null)
   const [runMeta, setRunMeta] = useState<{ durationSeconds: number; timestamp: string } | null>(null)
+  const [activeFilters, setActiveFilters] = useState<Record<string, string>>({})
 
   const { mutateAsync: generateZones, isPending, isError } = useGenerateZones()
   const { data: cityCatalog } = useCustomerCities()
   const cityOptions = useMemo(() => {
+    const cities: string[] = []
+    // Add "All Cities" as first option
+    cities.push(ALL_CITIES_VALUE)
+
     if (cityCatalog?.length) {
-      return cityCatalog.map((entry) => entry.name)
+      cities.push(...cityCatalog.map((entry) => entry.name))
+    } else {
+      cities.push(...FALLBACK_CITIES)
     }
-    return [...FALLBACK_CITIES]
+    return cities
   }, [cityCatalog])
 
   useEffect(() => {
@@ -88,7 +102,12 @@ export function ZoningWorkspacePage() {
     hasNextPage: hasMoreCustomerPages,
     fetchNextPage: fetchNextCustomerPage,
     isFetchingNextPage: isFetchingMoreCustomers,
-  } = useCustomerLocations({ city, pageSize: 1500, enabled: Boolean(city) })
+  } = useCustomerLocations({
+    city: city || ALL_CITIES_VALUE,
+    filters: activeFilters,
+    pageSize: 1500,
+    enabled: Boolean(city)
+  })
 
   const mapViewport = useMemo(() => {
     return CITY_VIEWPORTS[city] ?? DEFAULT_VIEWPORT
@@ -209,7 +228,8 @@ export function ZoningWorkspacePage() {
     if (!city) {
       return 'Select a city to view customers'
     }
-    return city + ' - ' + lastRunLabel
+    const cityLabel = city === ALL_CITIES_VALUE ? 'All Cities' : city
+    return cityLabel + ' - ' + lastRunLabel
   }, [city, lastRunLabel])
 
   const zoneMarkers = useMemo(() => {
@@ -217,6 +237,9 @@ export function ZoningWorkspacePage() {
       return []
     }
     const assignments = result?.assignments ?? {}
+    // Use smaller markers for large datasets
+    const markerRadius = customerPoints.length > 2000 ? 3 : customerPoints.length > 1000 ? 4 : 6
+
     return customerPoints.map((customer) => {
       const assignedZone = assignments[customer.customer_id] ?? customer.zone ?? 'Unassigned'
       const markerColor =
@@ -233,6 +256,7 @@ export function ZoningWorkspacePage() {
         id: customer.customer_id,
         position: [customer.latitude, customer.longitude] as [number, number],
         color: markerColor,
+        radius: markerRadius,
         tooltip: `${nameParts.join(' - ')} - ${assignedZone}`,
       }
     })
@@ -260,6 +284,10 @@ export function ZoningWorkspacePage() {
     setLastError(null)
     if (!city) {
       setLastError('Select a city before generating zones.')
+      return
+    }
+    if (city === ALL_CITIES_VALUE) {
+      setLastError('Cannot generate zones for "All Cities". Please select a specific city.')
       return
     }
     const payload: GenerateZonesPayload = {
@@ -353,27 +381,37 @@ export function ZoningWorkspacePage() {
       </header>
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,360px)_minmax(0,1fr)]">
-        <section className="space-y-5 rounded-2xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-800 dark:bg-background-dark/60">
-          <Field label="City">
-            <select
-              value={city}
-              onChange={(event) => setCity(event.target.value)}
-              className={inputClasses}
-              disabled={!cityOptions.length}
-            >
-              {cityOptions.length ? (
-                cityOptions.map((option) => (
-                  <option key={option} value={option}>
-                    {option}
-                  </option>
-                ))
-              ) : (
-                <option value="">No cities detected</option>
-              )}
-            </select>
-          </Field>
+        <div className="space-y-5">
+          <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-800 dark:bg-background-dark/60 space-y-5">
+            <Field label="City">
+              <select
+                value={city}
+                onChange={(event) => setCity(event.target.value)}
+                className={inputClasses}
+                disabled={!cityOptions.length}
+              >
+                {cityOptions.length ? (
+                  cityOptions.map((option) => (
+                    <option key={option} value={option}>
+                      {option === ALL_CITIES_VALUE ? 'All Cities' : option}
+                    </option>
+                  ))
+                ) : (
+                  <option value="">No cities detected</option>
+                )}
+              </select>
+            </Field>
+          </section>
 
-          <Field label="Target zones">
+          <FilterPanel
+            onFiltersChange={setActiveFilters}
+            activeFilters={activeFilters}
+            customerCount={customerPoints.length}
+            totalCustomers={customerTotal}
+          />
+
+          <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-800 dark:bg-background-dark/60 space-y-5">
+            <Field label="Target zones">
             <input
               type="number"
               min={1}
@@ -459,7 +497,13 @@ export function ZoningWorkspacePage() {
             </Field>
           )}
 
-          {method === 'manual' && <ManualPolygonEditor polygons={manualPolygons} onChange={setManualPolygons} />}
+          {method === 'manual' && (
+            <ManualPolygonEditor
+              polygons={manualPolygons}
+              onChange={setManualPolygons}
+              customerPoints={customerPoints}
+            />
+          )}
 
           <div className="rounded-xl border border-primary/30 bg-primary/10 p-4 text-sm dark:border-primary/40 dark:bg-primary/20">
             <div className="flex items-center justify-between">
@@ -511,33 +555,13 @@ export function ZoningWorkspacePage() {
               </p>
             ) : null}
           </div>
-        </section>
 
-        <section className="space-y-5 rounded-2xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-800 dark:bg-background-dark/60">
+          {/* Results Section */}
           <div className="rounded-lg border border-yellow-200 bg-yellow-50/80 p-3 text-sm text-yellow-800 dark:border-yellow-500/40 dark:bg-yellow-500/10 dark:text-yellow-100">
             <div className="flex items-center gap-2">
               <AlertTriangle className="h-5 w-5" />
               <p>Transfers may trigger finance “clearness”. Review before publishing.</p>
             </div>
-          </div>
-
-          <div className="space-y-2">
-            <InteractiveMap center={mapViewport.center} zoom={mapViewport.zoom} caption={mapCaption} markers={zoneMarkers} polygons={polygonOverlays} />
-            {hasMoreCustomerPages ? (
-              <div className="flex flex-wrap items-center gap-3 text-xs text-gray-500 dark:text-gray-400">
-                <p>
-                  Displaying {customerPoints.length.toLocaleString()} of {customerTotal.toLocaleString()} customers for this selection.
-                </p>
-                <button
-                  type="button"
-                  onClick={() => fetchNextCustomerPage()}
-                  disabled={isFetchingMoreCustomers}
-                  className="inline-flex items-center rounded-full border border-gray-300 px-3 py-1 font-semibold text-gray-700 transition hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-70 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-800"
-                >
-                  {isFetchingMoreCustomers ? 'Loading…' : 'Load more'}
-                </button>
-              </div>
-            ) : null}
           </div>
 
           <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 text-xs text-gray-600 dark:border-gray-700 dark:bg-gray-900/60 dark:text-gray-300">
@@ -602,8 +626,121 @@ export function ZoningWorkspacePage() {
               >
                 Transfers (CSV)
               </DownloadButton>
+              <DownloadButton
+                disabled={!result}
+                onClick={() => {
+                  if (result && polygonOverlays.length > 0) {
+                    const geojson = buildGeoJSON(polygonOverlays, result, city, result.method)
+                    downloadJson(geojson, 'zones_' + result.method + '_' + city + '.geojson')
+                  }
+                }}
+              >
+                GeoJSON
+              </DownloadButton>
             </div>
           </div>
+        </section>
+        </div>
+
+        {/* Main map area - right column */}
+        <section className="space-y-4 rounded-2xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-800 dark:bg-background-dark/60">
+          {/* Warning for large dataset */}
+          {city === ALL_CITIES_VALUE && customerTotal > 5000 && (
+            <div className="flex items-center gap-3 rounded-lg border border-yellow-200 bg-yellow-50 px-4 py-3 text-sm text-yellow-800 dark:border-yellow-500/30 dark:bg-yellow-500/10 dark:text-yellow-200">
+              <AlertTriangle className="h-5 w-5" />
+              <div>
+                <p className="font-semibold">Large dataset detected ({customerTotal.toLocaleString()} customers)</p>
+                <p className="text-xs">
+                  For better performance, select a specific city. Currently showing first {customerPoints.length.toLocaleString()} customers.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {method === 'manual' ? (
+            <DrawableMap
+              center={mapViewport.center}
+              zoom={mapViewport.zoom}
+              markers={zoneMarkers}
+              drawnPolygons={manualPolygons
+                .map((p) => {
+                  const coords = parsePolygonCoordinates(p.coordinates)
+                  return {
+                    id: p.id,
+                    zoneId: p.zoneId,
+                    coordinates: coords,
+                    customerCount: coords.length >= 3 ? countPointsInPolygon(customerPoints, coords) : 0,
+                    color: p.color,
+                    isEditing: p.isEditing,
+                    isDrawing: p.isDrawing,
+                  }
+                })
+                .filter((p) => p.coordinates.length >= 3 || p.isDrawing)}
+              onPolygonCreated={(coordinates) => {
+                const coordinatesStr = coordinates.map((coord) => `${coord[0].toFixed(5)},${coord[1].toFixed(5)}`).join('\n')
+                // Find the polygon that's in drawing mode
+                const drawingPolygon = manualPolygons.find((p) => p.isDrawing)
+
+                if (drawingPolygon) {
+                  // Update the drawing polygon with coordinates and disable drawing mode
+                  console.log('📍 Assigning drawn polygon to', drawingPolygon.zoneId)
+                  setManualPolygons(
+                    manualPolygons.map((p) =>
+                      p.id === drawingPolygon.id
+                        ? { ...p, coordinates: coordinatesStr, isDrawing: false }
+                        : p
+                    )
+                  )
+                } else {
+                  // Fallback: create new polygon if no drawing mode active
+                  setManualPolygons([
+                    ...manualPolygons,
+                    { id: createPolygonId(), zoneId: 'MANUAL_' + String(manualPolygons.length + 1).padStart(2, '0'), coordinates: coordinatesStr },
+                  ])
+                }
+              }}
+              onPolygonEdited={(polygonId, coordinates) => {
+                const coordinatesStr = coordinates.map((coord) => `${coord[0].toFixed(5)},${coord[1].toFixed(5)}`).join('\n')
+                console.log('📝 Updating polygon', polygonId, 'with new coordinates')
+                setManualPolygons(
+                  manualPolygons.map((p) => (p.id === polygonId ? { ...p, coordinates: coordinatesStr } : p))
+                )
+              }}
+              onPolygonDeleted={() => {
+                if (manualPolygons.length > 0) {
+                  setManualPolygons(manualPolygons.slice(0, -1))
+                }
+              }}
+              caption={`${city} - Draw polygons to define zones`}
+              className="h-[calc(100vh-12rem)]"
+            />
+          ) : (
+            <InteractiveMap
+              center={mapViewport.center}
+              zoom={mapViewport.zoom}
+              caption={mapCaption}
+              markers={zoneMarkers}
+              polygons={polygonOverlays}
+              className="h-[calc(100vh-12rem)]"
+            />
+          )}
+
+          {/* Customer count info */}
+          {hasMoreCustomerPages ? (
+            <div className="flex flex-wrap items-center gap-3 text-xs text-gray-500 dark:text-gray-400">
+              <p>
+                Displaying {customerPoints.length.toLocaleString()} of {customerTotal.toLocaleString()} customers for this selection.
+              </p>
+              <button
+                type="button"
+                onClick={() => fetchNextCustomerPage()}
+                disabled={isFetchingMoreCustomers}
+                className="inline-flex items-center rounded-full border border-gray-300 px-3 py-1 font-semibold text-gray-700 transition hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-70 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-800"
+              >
+                {isFetchingMoreCustomers ? 'Loading…' : 'Load more'}
+              </button>
+            </div>
+          ) : null}
         </section>
       </div>
     </div>
@@ -619,7 +756,24 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
   )
 }
 
-function ManualPolygonEditor({ polygons, onChange }: { polygons: ManualPolygonForm[]; onChange: (value: ManualPolygonForm[]) => void }) {
+function ManualPolygonEditor({
+  polygons,
+  onChange,
+  customerPoints,
+}: {
+  polygons: ManualPolygonForm[]
+  onChange: (value: ManualPolygonForm[]) => void
+  customerPoints: Array<{ customer_id: string; latitude: number; longitude: number; customer_name?: string; zone?: string }>
+}) {
+  // Calculate customer counts for each polygon
+  const polygonsWithCounts = useMemo(() => {
+    return polygons.map((polygon) => {
+      const coordinates = parsePolygonCoordinates(polygon.coordinates)
+      const count = coordinates.length >= 3 ? countPointsInPolygon(customerPoints, coordinates) : 0
+      return { ...polygon, customerCount: count }
+    })
+  }, [polygons, customerPoints])
+
   const updatePolygon = (id: string, updates: Partial<ManualPolygonForm>) => {
     onChange(polygons.map((polygon) => (polygon.id === id ? { ...polygon, ...updates } : polygon)))
   }
@@ -647,37 +801,197 @@ function ManualPolygonEditor({ polygons, onChange }: { polygons: ManualPolygonFo
           <Plus className="h-3 w-3" /> Add polygon
         </button>
       </div>
-      {polygons.map((polygon) => (
-        <div key={polygon.id} className="space-y-2 rounded-lg border border-gray-200 bg-white p-3 shadow-sm dark:border-gray-700 dark:bg-gray-900/60">
-          <div className="flex items-center gap-2">
-            <input
-              type="text"
-              value={polygon.zoneId}
-              onChange={(event) => updatePolygon(polygon.id, { zoneId: event.target.value })}
-              className={inputClasses}
-              placeholder="Zone ID"
-            />
-            <button
-              type="button"
-              onClick={() => removePolygon(polygon.id)}
-              className="rounded-full p-2 text-gray-500 transition hover:bg-gray-100 hover:text-red-500 dark:hover:bg-gray-800"
-              disabled={polygons.length === 1}
-            >
-              <Trash2 className="h-4 w-4" />
-            </button>
+
+      {/* List of polygons with customer counts and manual coordinate entry */}
+      <div className="space-y-2">
+        {polygons.length === 0 ? (
+          <div className="rounded-lg border border-dashed border-gray-300 bg-white p-4 text-center dark:border-gray-600 dark:bg-gray-900/60">
+            <p className="text-xs text-gray-500 dark:text-gray-400">
+              Draw polygons on the main map or add them manually
+            </p>
           </div>
-          <textarea
-            value={polygon.coordinates}
-            onChange={(event) => updatePolygon(polygon.id, { coordinates: event.target.value })}
-            rows={4}
-            className="w-full rounded-lg border border-gray-300 bg-background-light px-3 py-2 text-xs text-gray-900 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/40 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
-            placeholder="21.60,39.10\n21.63,39.14\n21.58,39.18"
-          />
-          <p className="text-[11px] text-gray-400 dark:text-gray-500">Enter latitude,longitude per line (minimum three vertices).</p>
-        </div>
-      ))}
+        ) : (
+          polygons.map((polygon) => {
+            const polygonData = polygonsWithCounts.find((p) => p.id === polygon.id)
+            const customerCount = polygonData?.customerCount ?? 0
+            const coordinates = parsePolygonCoordinates(polygon.coordinates)
+            const area = calculatePolygonArea(coordinates)
+            const polygonColor = polygon.color || '#3b82f6'
+
+            return (
+            <div key={polygon.id} className="space-y-2 rounded-lg border border-gray-200 bg-white p-3 shadow-sm dark:border-gray-700 dark:bg-gray-900/60">
+              {/* Header with Zone ID and action buttons */}
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={polygon.zoneId}
+                  onChange={(event) => updatePolygon(polygon.id, { zoneId: event.target.value })}
+                  className={inputClasses}
+                  placeholder="Zone ID"
+                  readOnly={!polygon.isEditing}
+                  disabled={!polygon.isEditing}
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    console.log('🔘 Draw button clicked! Polygon:', polygon.id, 'isDrawing:', polygon.isDrawing, 'coordinates:', polygon.coordinates)
+                    // If activating drawing, disable drawing on all other polygons
+                    if (!polygon.isDrawing) {
+                      console.log('🖍️ Activating drawing mode for polygon:', polygon.id)
+                      const updated = polygons.map((p) =>
+                        p.id === polygon.id
+                          ? { ...p, isDrawing: true, isEditing: false }
+                          : { ...p, isDrawing: false }
+                      )
+                      console.log('📋 Updated polygons:', updated)
+                      onChange(updated)
+                    } else {
+                      console.log('🛑 Deactivating drawing mode for polygon:', polygon.id)
+                      updatePolygon(polygon.id, { isDrawing: false })
+                    }
+                  }}
+                  disabled={polygon.coordinates.trim() !== ''}
+                  className={`rounded-full p-2 transition ${
+                    polygon.coordinates.trim() !== ''
+                      ? 'cursor-not-allowed text-gray-300 dark:text-gray-600'
+                      : polygon.isDrawing
+                      ? 'bg-green-100 text-green-600 dark:bg-green-900/40 dark:text-green-300'
+                      : 'text-gray-500 hover:bg-gray-100 hover:text-green-500 dark:hover:bg-gray-800'
+                  }`}
+                  title={
+                    polygon.coordinates.trim() !== ''
+                      ? "Polygon already drawn"
+                      : polygon.isDrawing
+                      ? "Stop drawing"
+                      : "Draw this polygon"
+                  }
+                >
+                  <Pencil className="h-4 w-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => updatePolygon(polygon.id, { isEditing: !polygon.isEditing })}
+                  disabled={polygon.coordinates.trim() === ''}
+                  className={`rounded-full p-2 transition ${
+                    polygon.coordinates.trim() === ''
+                      ? 'cursor-not-allowed text-gray-300 dark:text-gray-600'
+                      : polygon.isEditing
+                      ? 'bg-blue-100 text-blue-600 dark:bg-blue-900/40 dark:text-blue-300'
+                      : 'text-gray-500 hover:bg-gray-100 hover:text-blue-500 dark:hover:bg-gray-800'
+                  }`}
+                  title={
+                    polygon.coordinates.trim() === ''
+                      ? "No polygon to edit"
+                      : polygon.isEditing
+                      ? "Stop editing"
+                      : "Edit this polygon"
+                  }
+                >
+                  <Edit3 className="h-4 w-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => removePolygon(polygon.id)}
+                  className="rounded-full p-2 text-gray-500 transition hover:bg-gray-100 hover:text-red-500 dark:hover:bg-gray-800"
+                  disabled={polygons.length === 1}
+                  title="Delete polygon"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              </div>
+
+              {/* Color picker and stats */}
+              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2">
+                  <label className="text-xs font-medium text-gray-600 dark:text-gray-400">Color:</label>
+                  <input
+                    type="color"
+                    value={polygonColor}
+                    onChange={(event) => updatePolygon(polygon.id, { color: event.target.value })}
+                    className={`h-8 w-12 rounded border border-gray-300 dark:border-gray-600 ${
+                      polygon.isEditing ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'
+                    }`}
+                    title={polygon.isEditing ? "Choose polygon color" : "Enable edit mode to change color"}
+                    disabled={!polygon.isEditing}
+                  />
+                </div>
+                <div className="flex-1 text-xs text-gray-600 dark:text-gray-400">
+                  <span className="font-semibold">{customerCount}</span> customers •{' '}
+                  <span className="font-semibold">{area.toFixed(2)}</span> km²
+                </div>
+              </div>
+
+              {/* Coordinates textarea */}
+              <textarea
+                value={polygon.coordinates}
+                onChange={(event) => updatePolygon(polygon.id, { coordinates: event.target.value })}
+                rows={4}
+                className="w-full rounded-lg border border-gray-300 bg-background-light px-3 py-2 text-xs text-gray-900 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/40 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
+                placeholder="Lat,Lon (one per line)"
+                readOnly={!polygon.isEditing}
+                disabled={!polygon.isEditing}
+              />
+              <p className="text-[11px] text-gray-400 dark:text-gray-500">
+                Enter latitude,longitude per line (minimum three vertices)
+              </p>
+            </div>
+            )
+          })
+        )}
+      </div>
     </div>
   )
+}
+
+// Helper function to parse coordinates from string
+function parsePolygonCoordinates(coordinatesStr: string): Array<[number, number]> {
+  const lines = coordinatesStr
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+
+  const coordinates: Array<[number, number]> = []
+  for (const line of lines) {
+    const parts = line.split(',')
+    if (parts.length === 2) {
+      const lat = Number(parts[0].trim())
+      const lon = Number(parts[1].trim())
+      if (Number.isFinite(lat) && Number.isFinite(lon)) {
+        coordinates.push([lat, lon])
+      }
+    }
+  }
+  return coordinates
+}
+
+// Calculate polygon area in km² using the Haversine formula
+function calculatePolygonArea(coordinates: Array<[number, number]>): number {
+  if (coordinates.length < 3) return 0
+
+  // Earths radius in kilometers
+  const EARTH_RADIUS_KM = 6371
+
+  // Convert degrees to radians
+  const toRadians = (degrees: number) => (degrees * Math.PI) / 180
+
+  // Calculate area using spherical excess formula
+  let area = 0
+  const numPoints = coordinates.length
+
+  for (let i = 0; i < numPoints; i++) {
+    const [lat1, lon1] = coordinates[i]
+    const [lat2, lon2] = coordinates[(i + 1) % numPoints]
+
+    const lat1Rad = toRadians(lat1)
+    const lat2Rad = toRadians(lat2)
+    const lon1Rad = toRadians(lon1)
+    const lon2Rad = toRadians(lon2)
+
+    area += (lon2Rad - lon1Rad) * (2 + Math.sin(lat1Rad) + Math.sin(lat2Rad))
+  }
+
+  area = Math.abs((area * EARTH_RADIUS_KM * EARTH_RADIUS_KM) / 2)
+  return area
 }
 
 function SummaryTable({ rows, hasResult }: { rows: SummaryRow[]; hasResult: boolean }) {
@@ -816,4 +1130,56 @@ function buildTransfersCsv(rows: TransferRow[]) {
   const header = 'CustomerId,FromZone,ToZone,DistanceKm'
   const csvRows = rows.map((row) => row.customer + ',' + row.fromZone + ',' + row.toZone + ',' + row.distance.replace(' km', ''))
   return [header, ...csvRows].join('\n')
+}
+
+function buildGeoJSON(
+  polygons: MapPolygon[],
+  result: GenerateZonesResponse,
+  city: string,
+  method: string
+): unknown[] {
+  return polygons.map((polygon, index) => {
+    const zoneId = polygon.id.replace('-polygon', '')
+    const coordinates = polygon.positions.map((pos) => `${pos[1]} ${pos[0]}`).join(',')
+    const wkt = `POLYGON((${coordinates}))`
+
+    // Calculate centroid
+    const lats = polygon.positions.map((pos) => pos[0])
+    const lons = polygon.positions.map((pos) => pos[1])
+    const centroidLat = lats.reduce((a, b) => a + b, 0) / lats.length
+    const centroidLon = lons.reduce((a, b) => a + b, 0) / lons.length
+
+    const customerCount = result.counts?.find((c) => c.zone_id === zoneId)?.customer_count || 0
+
+    return {
+      id: crypto.randomUUID(),
+      name: zoneId,
+      group: city.toUpperCase(),
+      featureClass: '2',
+      wkt,
+      json: JSON.stringify({
+        type: method,
+        subType: null,
+        labelPoint: { _x: centroidLon, _y: centroidLat },
+      }),
+      visible: true,
+      symbology: {
+        fillColor: polygon.fillColor || polygon.color,
+        fillOpacity: 0.33,
+        lineColor: 'black',
+        lineWidth: 2,
+        lineOpacity: 0.5,
+        scale: null,
+      },
+      styledGeom: null,
+      notes: `tag : ${city.toUpperCase()}|${zoneId}\ngroup : ${city.toUpperCase()}\nname : ${zoneId}\nmethod : ${method}\ncustomers : ${customerCount}\n`,
+      nodeTags: [],
+      nameTagPlacementPoint: null,
+      simplificationMeters: 0,
+      modifiedTimestamp: 0,
+      managerId: null,
+      collapsed: true,
+      locked: null,
+    }
+  })
 }

@@ -1,11 +1,14 @@
 ﻿import { useMemo, useRef, useState } from 'react'
 import type { ReactNode, ChangeEvent } from 'react'
-import { AlertCircle, Download, Info, RefreshCw, UploadCloud } from 'lucide-react'
+import { AlertCircle, Download, Edit3, Info, RefreshCw, UploadCloud } from 'lucide-react'
 
 import { useCustomerStats } from '../../hooks/useCustomerStats'
 import { useCustomerValidation } from '../../hooks/useCustomerValidation'
 import type { CustomerValidationResponse } from '../../hooks/useCustomerValidation'
 import { useUploadCustomers } from '../../hooks/useUploadCustomers'
+import { ColumnMappingModal } from '../../components/ColumnMappingModal'
+import type { FieldDefinition } from '../../components/ColumnMappingModal'
+import { apiClient } from '../../api/client'
 
 type IssueCard = {
   key: keyof CustomerValidationResponse['issues']
@@ -44,6 +47,13 @@ const ISSUE_METADATA: Record<IssueCard['key'], { title: string; tone: IssueCard[
   },
 }
 
+type PreviewResponse = {
+  fileName: string
+  detectedColumns: string[]
+  suggestedMappings: Record<string, string>
+  requiredFields: FieldDefinition[]
+}
+
 export function UploadValidatePage() {
   const { data: statsData } = useCustomerStats()
   const { data: validationData, isLoading: validationLoading } = useCustomerValidation()
@@ -51,6 +61,11 @@ export function UploadValidatePage() {
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const [uploadMessage, setUploadMessage] = useState<string | null>(null)
   const [uploadError, setUploadError] = useState<string | null>(null)
+  const [showMappingModal, setShowMappingModal] = useState(false)
+  const [previewData, setPreviewData] = useState<PreviewResponse | null>(null)
+  const [selectedFile, setSelectedFile] = useState<File | null>(null)
+  const [isEditMode, setIsEditMode] = useState(false)
+  const [isLoadingFileInfo, setIsLoadingFileInfo] = useState(false)
 
   const stats = useMemo(
     () => [
@@ -140,28 +155,122 @@ export function UploadValidatePage() {
     )
   }, [issueRows, searchTerm])
 
-  const handleFileUpload = (event: ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
     if (!file) {
       return
     }
     setUploadMessage(null)
     setUploadError(null)
-    uploadMutation.mutate(file, {
-      onSuccess: (data) => {
-        setUploadMessage(`Upload complete: ${data.lastUpload.fileName}`)
-        event.target.value = ''
-      },
-      onError: (error) => {
-        const message = error instanceof Error ? error.message : 'Unable to upload dataset.'
-        setUploadError(message)
-        event.target.value = ''
-      },
-    })
+    setSelectedFile(file)
+
+    // Call preview endpoint to get column mappings
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+
+      const response = await apiClient.post<PreviewResponse>('/customers/upload/preview', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      })
+
+      setPreviewData(response.data)
+      setShowMappingModal(true)
+      event.target.value = ''
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to preview file'
+      setUploadError(message)
+      event.target.value = ''
+    }
+  }
+
+  const handleEditMappings = async () => {
+    setUploadMessage(null)
+    setUploadError(null)
+    setIsLoadingFileInfo(true)
+
+    try {
+      const response = await apiClient.get<PreviewResponse & { currentFilterColumns: string[] }>('/customers/current-file-info')
+      setPreviewData(response.data)
+      setIsEditMode(true)
+      setShowMappingModal(true)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to load file info'
+      setUploadError(message)
+    } finally {
+      setIsLoadingFileInfo(false)
+    }
+  }
+
+  const handleConfirmMapping = (mappings: Record<string, string>, filterColumns: string[]) => {
+    if (isEditMode) {
+      // Re-process existing file with new mappings
+      handleReprocessMappings(mappings, filterColumns)
+    } else if (selectedFile) {
+      // Upload new file with mappings
+      uploadMutation.mutate(
+        {
+          file: selectedFile,
+          mappings,
+          filterColumns,
+        },
+        {
+          onSuccess: (data) => {
+            setUploadMessage(`Upload complete: ${data.lastUpload.fileName}`)
+            setSelectedFile(null)
+            setPreviewData(null)
+          },
+          onError: (error) => {
+            const message = error instanceof Error ? error.message : 'Unable to upload dataset.'
+            setUploadError(message)
+            setSelectedFile(null)
+            setPreviewData(null)
+          },
+        },
+      )
+    }
+  }
+
+  const handleReprocessMappings = async (mappings: Record<string, string>, filterColumns: string[]) => {
+    try {
+      const formData = new FormData()
+      formData.append('mappings', JSON.stringify(mappings))
+      formData.append('filter_columns', JSON.stringify(filterColumns))
+
+      const response = await apiClient.put('/customers/reprocess-mappings', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      })
+
+      setUploadMessage('Mappings updated successfully')
+      setPreviewData(null)
+      setIsEditMode(false)
+      setShowMappingModal(false)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to update mappings'
+      setUploadError(message)
+    }
   }
 
   return (
     <div className="space-y-8">
+      {/* Column Mapping Modal */}
+      {previewData && (
+        <ColumnMappingModal
+          isOpen={showMappingModal}
+          onClose={() => {
+            setShowMappingModal(false)
+            setPreviewData(null)
+            setSelectedFile(null)
+            setIsEditMode(false)
+          }}
+          onConfirm={handleConfirmMapping}
+          fileName={previewData.fileName}
+          detectedColumns={previewData.detectedColumns}
+          suggestedMappings={previewData.suggestedMappings}
+          requiredFields={previewData.requiredFields}
+          initialFilterColumns={(previewData as PreviewResponse & { currentFilterColumns?: string[] }).currentFilterColumns}
+        />
+      )}
+
       <section className="flex flex-col gap-4">
         <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
           <div>
@@ -188,6 +297,14 @@ export function UploadValidatePage() {
               <div className="inline-flex items-center gap-2 rounded-full bg-orange-100 px-3 py-1 text-sm font-medium text-orange-600 dark:bg-orange-500/20 dark:text-orange-300">
                 <AlertCircle className="h-4 w-4" /> Latest validation run: Warning
               </div>
+              <button
+                type="button"
+                onClick={handleEditMappings}
+                className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 shadow-sm transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-70 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
+                disabled={isLoadingFileInfo || !statsData?.lastUpload?.fileName}
+              >
+                <Edit3 className="h-4 w-4" /> {isLoadingFileInfo ? 'Loading…' : 'Edit Mappings'}
+              </button>
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
