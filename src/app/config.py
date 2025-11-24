@@ -55,6 +55,16 @@ class Settings(BaseSettings):
         description="Permitted web origins for browser clients (CORS).",
     )
 
+    # Supabase configuration
+    supabase_url: Optional[str] = Field(
+        default=None,
+        description="Supabase project URL (e.g., https://xxx.supabase.co).",
+    )
+    supabase_key: Optional[str] = Field(
+        default=None,
+        description="Supabase service role key for backend operations.",
+    )
+
     model_config = {
         "env_prefix": "IZG_",
         "case_sensitive": False,

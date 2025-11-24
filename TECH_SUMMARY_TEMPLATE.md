@@ -14,10 +14,10 @@
 | State | TanStack React Query | 5.90.5 |
 | Maps | Leaflet + React-Leaflet | 1.9.4 / 5.0.0 |
 | Backend | FastAPI + Python | 0.110.0 / 3.11 |
+| Database | Supabase PostgreSQL | 2.10.0 (py) / 2.84.0 (js) |
 | Optimization | Google OR-Tools | 9.10.4067 |
 | Routing Engine | OSRM (Docker) | latest |
 | Deployment | Cloudflare Pages | - |
-| Data Storage | File-based (CSV/Excel) | - |
 
 ---
 
@@ -369,9 +369,9 @@ CMD ["uvicorn", "src.app.main:app", "--host", "0.0.0.0", "--port", "8000"]
 
 ---
 
-## 6. Supabase Integration (Template)
+## 6. Supabase Integration (INSTALLED)
 
-**Note:** This project uses file-based storage. For Supabase PostgreSQL:
+**Status:** Supabase clients installed for both frontend and backend.
 
 ### Setup
 ```bash
