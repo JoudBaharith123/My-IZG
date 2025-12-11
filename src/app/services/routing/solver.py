@@ -6,7 +6,13 @@ import math
 from dataclasses import dataclass
 from typing import Sequence
 
-from ortools.constraint_solver import pywrapcp, routing_enums_pb2
+try:
+    from ortools.constraint_solver import pywrapcp, routing_enums_pb2
+    ORTOOLS_AVAILABLE = True
+except ImportError:
+    ORTOOLS_AVAILABLE = False
+    pywrapcp = None
+    routing_enums_pb2 = None
 
 from ...config import settings
 from ...models.domain import Customer
@@ -49,6 +55,11 @@ def solve_vrp(
     working_days: Sequence[str] | None = None,
     constraints: SolverConstraints | None = None,
 ) -> RoutingResult:
+    if not ORTOOLS_AVAILABLE:
+        raise ImportError(
+            "OR-Tools is not installed. Routing optimization requires OR-Tools. "
+            "Install Python 3.11 or 3.12 to use routing features, or install OR-Tools for Python 3.14 when available."
+        )
     constraints = constraints or SolverConstraints()
     working_days = tuple(working_days or settings.working_days)
 

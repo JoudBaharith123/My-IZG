@@ -18,7 +18,12 @@ def get_strategy(method: str, **kwargs: Any) -> ZoningStrategy:
         case "isochrone":
             return IsochroneZoning()
         case "clustering":
-            return ClusteringZoning(**{k: v for k, v in kwargs.items() if k in {"balance_tolerance"}})
+            clustering_kwargs = {
+                k: v
+                for k, v in kwargs.items()
+                if k in {"balance_tolerance", "use_depot_weighting", "depot_weight_factor"}
+            }
+            return ClusteringZoning(**clustering_kwargs)
         case "manual":
             return ManualPolygonZoning()
         case _:

@@ -43,7 +43,8 @@ def load_customers(source: Optional[Path] = None) -> tuple[Customer, ...]:
                 Customer(
                     area=(row.get("Area") or row.get("area") or "").strip() or None,
                     region=(row.get("Region") or row.get("region") or "").strip() or None,
-                    city=(row.get("City") or row.get("city") or "").strip() or None,
+                    # Use City column (supports both Arabic and English via resolve_depot translation)
+                    city=(row.get("City") or row.get("city") or row.get("Area") or row.get("area") or "").strip() or None,
                     zone=(row.get("Zone") or row.get("zone") or "").strip() or None,
                     agent_id=(row.get("AgentId") or row.get("agent_id") or "").strip() or None,
                     agent_name=(row.get("AgentName") or row.get("agent_name") or "").strip() or None,
@@ -59,16 +60,84 @@ def load_customers(source: Optional[Path] = None) -> tuple[Customer, ...]:
 
 
 def iter_customers_for_location(location: str, source: Optional[Path] = None) -> Iterator[Customer]:
+    """Get customers for a city/area/zone with geographic validation.
+    
+    Uses City column with coordinate validation to ensure data quality.
+    Filters out customers with invalid or out-of-bounds coordinates.
+    """
     normalized = location.strip().lower()
+    
+    # Geographic bounding boxes for each city (lat_min, lat_max, lon_min, lon_max)
+    CITY_BOUNDARIES = {
+        "jeddah": (21.2, 21.8, 39.0, 39.5),
+        "جدة": (21.2, 21.8, 39.0, 39.5),
+        "جده": (21.2, 21.8, 39.0, 39.5),
+        "riyadh": (24.3, 24.9, 46.4, 47.0),
+        "الرياض": (24.3, 24.9, 46.4, 47.0),
+        "makkah": (21.3, 21.6, 39.7, 40.0),
+        "مكة": (21.3, 21.6, 39.7, 40.0),
+        "مكة المكرمة": (21.3, 21.6, 39.7, 40.0),
+        "madinah": (24.3, 24.7, 39.4, 39.8),
+        "madina": (24.3, 24.7, 39.4, 39.8),
+        "المدينة": (24.3, 24.7, 39.4, 39.8),
+        "المدينة المنورة": (24.3, 24.7, 39.4, 39.8),
+        "dammam": (26.2, 26.6, 49.9, 50.3),
+        "الدمام": (26.2, 26.6, 49.9, 50.3),
+        "taif": (21.1, 21.5, 40.2, 40.7),
+        "الطائف": (21.1, 21.5, 40.2, 40.7),
+    }
+    
+    # Arabic to English city name mappings
+    CITY_TRANSLATIONS = {
+        "جدة": ["جدة", "jeddah", "جده", "جدّة"],
+        "jeddah": ["جدة", "jeddah", "جده", "جدّة"],
+        "الرياض": ["الرياض", "riyadh", "رياض"],
+        "riyadh": ["الرياض", "riyadh", "رياض"],
+        "مكة": ["مكة", "مكة المكرمة", "makkah", "mecca"],
+        "مكة المكرمة": ["مكة", "مكة المكرمة", "makkah", "mecca"],
+        "makkah": ["مكة", "مكة المكرمة", "makkah", "mecca"],
+        "المدينة": ["المدينة", "المدينة المنورة", "madinah", "madina"],
+        "المدينة المنورة": ["المدينة", "المدينة المنورة", "madinah", "madina"],
+        "madinah": ["المدينة", "المدينة المنورة", "madinah", "madina"],
+        "madina": ["المدينة", "المدينة المنورة", "madinah", "madina"],
+        "الدمام": ["الدمام", "dammam", "دمام"],
+        "dammam": ["الدمام", "dammam", "دمام"],
+        "تبوك": ["تبوك", "tabuk"],
+        "tabuk": ["تبوك", "tabuk"],
+        "الطائف": ["الطائف", "taif"],
+        "taif": ["الطائف", "taif"],
+    }
+    
+    # Get all accepted variants for this city
+    accepted_variants = CITY_TRANSLATIONS.get(normalized, [normalized])
+    accepted_variants_set = set(v.lower() for v in accepted_variants)
+    
+    # Get geographic boundary for validation
+    city_bounds = CITY_BOUNDARIES.get(normalized)
+    
     for customer in load_customers(source):
-        if customer.city and customer.city.lower() == normalized:
-            yield customer
+        # Match by City column with variants
+        city_match = customer.city and customer.city.lower() in accepted_variants_set
+        
+        # Match by Zone (for zone-specific queries)
+        zone_match = customer.zone and customer.zone.lower() == normalized
+        
+        if not (city_match or zone_match):
             continue
-        if customer.area and customer.area.lower() == normalized:
-            yield customer
-            continue
-        if customer.zone and customer.zone.lower() == normalized:
-            yield customer
+        
+        # Validate coordinates are within city boundaries (if boundary defined)
+        if city_bounds and city_match:
+            lat_min, lat_max, lon_min, lon_max = city_bounds
+            # Skip customers with invalid or out-of-bounds coordinates
+            if customer.latitude < lat_min or customer.latitude > lat_max:
+                continue
+            if customer.longitude < lon_min or customer.longitude > lon_max:
+                continue
+            # Skip invalid coordinates (0, 0) or negative values
+            if customer.latitude <= 0 or customer.longitude <= 0:
+                continue
+        
+        yield customer
 
 
 def get_customers_for_location(location: str, source: Optional[Path] = None) -> tuple[Customer, ...]:
@@ -88,9 +157,49 @@ def get_dc_lookup() -> dict[str, Depot]:
 
 
 def resolve_depot(city: str) -> Optional[Depot]:
+    """Resolve depot by city name with Arabic-English translation support."""
+    # Arabic to English city name mappings
+    CITY_TRANSLATIONS = {
+        "جدة": "jeddah",
+        "الرياض": "riyadh",
+        "رياض": "riyadh",
+        "الدمام": "dammam",
+        "دمام": "dammam",
+        "مكة": "makkah",
+        "مكة المكرمة": "makkah",
+        "المدينة": "madinah",
+        "المدينة المنورة": "madinah",
+        "تبوك": "tabuk",
+        "خميس مشيط": "khames mushait",
+        "بريدة": "buraidah",
+        "جيزان": "jizan",
+        "حائل": "hail",
+    }
+    
     depot_map = get_dc_lookup()
     normalized = city.strip().lower()
-    return depot_map.get(normalized) or depot_map.get(normalized.replace(" ", "")) or depot_map.get(normalized[:3])
+    
+    # Try direct lookup
+    depot = depot_map.get(normalized)
+    if depot:
+        return depot
+    
+    # Try without spaces
+    depot = depot_map.get(normalized.replace(" ", ""))
+    if depot:
+        return depot
+    
+    # Try first 3 characters
+    depot = depot_map.get(normalized[:3])
+    if depot:
+        return depot
+    
+    # Try Arabic to English translation
+    if normalized in CITY_TRANSLATIONS:
+        english_name = CITY_TRANSLATIONS[normalized]
+        return depot_map.get(english_name)
+    
+    return None
 
 
 def set_active_customer_file(path: Path) -> None:

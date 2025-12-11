@@ -8,11 +8,20 @@ export type FilterPanelProps = {
   activeFilters: Record<string, string>
   customerCount?: number
   totalCustomers?: number
+  selectedCity?: string  // NEW: Filter values by selected city
 }
 
-export function FilterPanel({ onFiltersChange, activeFilters, customerCount, totalCustomers }: FilterPanelProps) {
+export function FilterPanel({ onFiltersChange, activeFilters, customerCount, totalCustomers, selectedCity }: FilterPanelProps) {
   const { data: filterMetadata } = useFilterMetadata()
-  const filterColumns = filterMetadata?.filter_columns || []
+  const allFilterColumns = filterMetadata?.filter_columns || []
+  
+  // Exclude 'City', 'Area', and 'Zone' from filters
+  // City is in main controls, Zone is replaced by "Zone (Generated)"
+  const filterColumns = allFilterColumns.filter(col => 
+    col.toLowerCase() !== 'city' && 
+    col.toLowerCase() !== 'area' && 
+    col.toLowerCase() !== 'zone'
+  )
 
   if (filterColumns.length === 0) {
     return null
@@ -78,6 +87,7 @@ export function FilterPanel({ onFiltersChange, activeFilters, customerCount, tot
             column={column}
             value={activeFilters[column] || ''}
             onChange={(value) => handleFilterChange(column, value)}
+            selectedCity={selectedCity}
           />
         ))}
       </div>
@@ -102,10 +112,14 @@ type FilterDropdownProps = {
   column: string
   value: string
   onChange: (value: string) => void
+  selectedCity?: string
 }
 
-function FilterDropdown({ column, value, onChange }: FilterDropdownProps) {
-  const { data, isLoading } = useColumnValues(column)
+function FilterDropdown({ column, value, onChange, selectedCity }: FilterDropdownProps) {
+  const { data, isLoading } = useColumnValues(column, { 
+    city: selectedCity, 
+    enabled: true 
+  })
   const values = data?.values || []
 
   const displayName = column.replace(/_/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase())

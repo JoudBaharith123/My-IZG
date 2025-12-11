@@ -289,10 +289,22 @@ def get_filter_metadata() -> dict:
 
 
 @router.get("/filter-values/{column_name}")
-def get_column_values(column_name: str, limit: int = Query(100, ge=1, le=1000)) -> dict:
-    """Get unique values for a specific column to use in filter dropdowns."""
+def get_column_values(
+    column_name: str, 
+    city: str | None = Query(default=None, description="Filter values by city"),
+    limit: int = Query(100, ge=1, le=1000)
+) -> dict:
+    """Get unique values for a specific column to use in filter dropdowns.
+    
+    If city is provided, returns only values for customers in that city.
+    """
     try:
-        customers = load_customers()
+        # If city filter provided, get only customers for that city
+        if city and city.lower() != 'all':
+            from ...data.customers_repository import get_customers_for_location
+            customers = get_customers_for_location(city)
+        else:
+            customers = load_customers()
     except FileNotFoundError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No customer data loaded")
 

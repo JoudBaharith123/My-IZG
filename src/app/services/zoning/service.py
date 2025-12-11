@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Sequence
 
 from shapely.geometry import MultiPoint, Polygon, Point
+from shapely.ops import unary_union
 
 from ...data.customers_repository import get_customers_for_location, resolve_depot
 from ...persistence.filesystem import FileStorage
@@ -163,29 +164,84 @@ def _manual_polygon_overlays(polygons: Sequence) -> list[dict]:
 
 
 def _convex_hull_overlays(assignments: dict[str, str], customers: Sequence[Customer]) -> list[dict]:
+    """Generate zone polygons from customer points, ensuring NO overlaps."""
     customer_lookup = {customer.customer_id: customer for customer in customers}
     zone_points: dict[str, set[tuple[float, float]]] = {}
+    zone_customer_count: dict[str, int] = {}
+    
+    # Collect points and count customers for each zone
     for customer_id, zone_id in assignments.items():
         customer = customer_lookup.get(customer_id)
         if not customer:
             continue
         zone_points.setdefault(zone_id, set()).add((customer.longitude, customer.latitude))
+        zone_customer_count[zone_id] = zone_customer_count.get(zone_id, 0) + 1
 
-    overlays: list[dict] = []
+    # First pass: Create initial convex hulls with centers
+    zone_polygons: dict[str, tuple[Polygon, Point]] = {}
     for zone_id, points in zone_points.items():
         if len(points) < 3:
             continue
         hull = MultiPoint(list(points)).convex_hull
         if hull.is_empty or hull.geom_type != "Polygon":
             continue
-        lat_lon_sequence = [[lat, lon] for lon, lat in hull.exterior.coords]
-        centroid = hull.centroid
+        zone_polygons[zone_id] = (hull, hull.centroid)
+    
+    # Check for overlaps and clip if necessary
+    zone_ids = list(zone_polygons.keys())
+    clipped_polygons: dict[str, Polygon] = {}
+    
+    for zone_id in zone_ids:
+        polygon, centroid = zone_polygons[zone_id]
+        final_polygon = polygon
+        
+        # Check overlap with other zones
+        for other_zone_id in zone_ids:
+            if other_zone_id == zone_id:
+                continue
+            
+            other_polygon, other_centroid = zone_polygons[other_zone_id]
+            
+            # If polygons overlap, remove the overlap completely
+            if polygon.intersects(other_polygon):
+                overlap = polygon.intersection(other_polygon)
+                if not overlap.is_empty and overlap.area > 0:
+                    # Remove the overlapping area from this polygon
+                    # This guarantees no visual overlap
+                    try:
+                        # Simply remove the overlap
+                        final_polygon = final_polygon.difference(other_polygon)
+                        
+                        # If result is MultiPolygon, keep largest part
+                        if final_polygon.geom_type == "MultiPolygon":
+                            final_polygon = max(final_polygon.geoms, key=lambda p: p.area)
+                        
+                        # If polygon became invalid, shrink original slightly
+                        if final_polygon.is_empty or final_polygon.geom_type != "Polygon":
+                            final_polygon = polygon.buffer(-0.001)  # 0.001° shrink (~111m)
+                    except Exception:
+                        # Fallback: shrink slightly
+                        final_polygon = polygon.buffer(-0.001)  # Visible shrink
+        
+        clipped_polygons[zone_id] = final_polygon
+    
+    # Build final overlays with customer counts
+    overlays: list[dict] = []
+    for zone_id, polygon in clipped_polygons.items():
+        if polygon.is_empty or polygon.geom_type != "Polygon":
+            continue
+        
+        lat_lon_sequence = [[lat, lon] for lon, lat in polygon.exterior.coords]
+        centroid = polygon.centroid
+        customer_count = zone_customer_count.get(zone_id, 0)
+        
         overlays.append(
             {
                 "zone_id": zone_id,
                 "coordinates": lat_lon_sequence,
                 "centroid": [centroid.y, centroid.x],
                 "source": "convex_hull",
+                "customer_count": customer_count,  # Add customer count for tooltip
             }
         )
     return overlays

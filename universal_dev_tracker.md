@@ -7,7 +7,7 @@
 
 ---
 
-## ًںژ¯ Project Specification
+##Project Specification
 
 ### Project Overview
 Intelligent Zone Generator (IZG) is an internal logistics and sales planning platform that ingests customer master data and produces balanced delivery zones and optimized visit routes. The system must support multiple zoning strategies (polar sectors, OSRM isochrones, constrained clustering, and manual overrides) and integrate with an OR-Tools-based vehicle routing layer. The near-term goal is to replace ad-hoc polygon zoning with reproducible, data-driven workflows backed by user-configurable parameters.
@@ -27,7 +27,7 @@ Intelligent Zone Generator (IZG) is an internal logistics and sales planning pla
 
 ---
 
-## âœ… TODO List
+##TODO List
 
 ### High Priority
 - [x] Define customer CSV schema and required fields (Status: Complete | Completed: 2025-10-29 | By: Codex)
@@ -52,7 +52,7 @@ Intelligent Zone Generator (IZG) is an internal logistics and sales planning pla
 
 ---
 
-## ًں—‚ Phase Plan & Status
+##Phase Plan & Status
 
 ### Phase 1 â€“ Inception & Requirements âœ…
 - [x] Stakeholder alignment sessions (completed; roster established and sessions held 2025-10-29)
@@ -66,7 +66,7 @@ Intelligent Zone Generator (IZG) is an internal logistics and sales planning pla
 - Pain point: legacy zones are poorly balanced; reassignments shift payment responsibility between agents.
 - Operational constraint: customer-agent reassignment triggers finance â€œclearnessâ€‌; large changes must be phased to avoid overwhelming finance and disrupting sales.
 
-### Phase 2 â€“ Architecture & Environment
+### Phase 2 Architecture & Environment
 - [x] Confirm target architecture blueprint & integration points (2025-10-29) â€“ see notes below
 - [x] Provision local/dev environment templates (Dockerfile, docker-compose, .env example)
 - [x] Establish CI/CD scaffolding (GitHub Actions workflow `.github/workflows/ci.yml`)
@@ -80,7 +80,7 @@ Intelligent Zone Generator (IZG) is an internal logistics and sales planning pla
 - CI/CD: GitHub Actions pipeline (`.github/workflows/ci.yml`) running mypy, pytest, and Docker build; future deploy stage TBD.
 - Infrastructure alignment summary documented in `docs/INFRASTRUCTURE_ALIGNMENT.md` (reuse VM1 OSRM, target port 8084, deployment path `/opt/logistics-ai-platform/services/06-izg-backend/`).
 
-### Phase 3 â€“ Backend Foundations
+### Phase 3 Backend Foundations
 - [x] Scaffold FastAPI project and configuration layer (2025-10-29)
 - [x] Implement customer/DC data loaders and zoning service orchestrator (2025-10-29)
 - [x] Implement file-based persistence for zone outputs (`src/app/persistence/`, 2025-10-29)
@@ -89,7 +89,7 @@ Intelligent Zone Generator (IZG) is an internal logistics and sales planning pla
 - [x] Expand integration tests covering zoning & routing endpoints (`tests/test_integration.py`, 2025-10-29)
 
 
-### Phase 4 â€“ Optimization & Routing Services
+### Phase 4 Optimization & Routing Services
 - [x] Implement zoning strategies: polar, isochrone (OSRM fallback), clustering, manual polygons (2025-10-29)
 - [x] Implement OSRM client with retry/backoff (`src/app/services/routing/osrm_client.py`, 2025-10-29)
 - [x] Integrate OR-Tools VRP solver and configuration hooks (`src/app/services/routing/solver.py`, 2025-10-29)
@@ -105,13 +105,13 @@ Intelligent Zone Generator (IZG) is an internal logistics and sales planning pla
 - [x] Hook OSRM health + customer stats into frontend (React Query integration, 2025-10-30)
 - [x] Enable manual polygon editing with live assignments
 
-### Phase 6 â€“ Quality Assurance & Hardening ✅
+### Phase 6 Quality Assurance & Hardening ✅
 - [x] Extend automated tests for map overlays & customer pagination (`tests/test_zoning_service.py`, `tests/test_routing_service.py`, `tests/test_integration.py`, 2025-11-01)
 - [x] Publish Phase 6 manual validation checklist (`manual_testing/phase6_manual_validation.md`, 2025-11-01)
 - [x] Capture baseline performance measurements for zoning/routing/location APIs (`manual_testing/test_run_log.md`, 2025-11-01)
 - [x] Validate security controls & manual UX checklist (map overlays, pagination, headers logged 2025-11-01)
 
-### Phase 7 â€“ Deployment & Operations
+### Phase 7 Deployment & Operations
 - [x] Prepare deployment scripts (systemd, Nginx, migrations)
 - [x] Configure monitoring/logging/backups (`docs/deployment/PROMETHEUS.md`)
 - [ ] Conduct UAT with pilot users
@@ -119,7 +119,7 @@ Intelligent Zone Generator (IZG) is an internal logistics and sales planning pla
 
 ---
 
-## ًں“ٹ Progress Metrics
+##Progress Metrics
 
 - **Overall Progress:** 76% (Phase 7 tooling and monitoring ready)
 - **Completed Tasks:** 26  
@@ -130,7 +130,7 @@ Testing status will remain pending until automated and manual tests are created 
 
 ---
 
-## ًں§ھ Manual Testing Summary
+##Manual Testing Summary
 
 - **Executed:** `002_zoning_balancing.md`, `003_routing_vrp.md` (manual + FastAPI outputs captured with sandbox datasets), Phase 6 checklist (`manual_testing/phase6_manual_validation.md`), baseline perf & security log (`manual_testing/test_run_log.md`).
 - **Outstanding:** Repeat manual validation against production datasets and live OSRM before final sign-off.
@@ -138,7 +138,7 @@ Testing status will remain pending until automated and manual tests are created 
 
 ---
 
-## ًںŒگ Infrastructure Notes
+##Infrastructure Notes
 
 - OSRM base URL not yet configured; default haversine fallback active.
 - Data files currently local (`data/Easyterrritory_26831_29_oct_2025.CSV`, `data/dc_locations.xlsx`).
@@ -270,7 +270,7 @@ Testing status will remain pending until automated and manual tests are created 
 
 ---
 
-## ًں"‌ Changelog
+##Changelog
 
 - **2025-11-07 21:30:00** — Enhanced manual zone creation with Leaflet.draw integration: added interactive map-based polygon drawing with real-time customer counting, vertex editing, and draw/manual toggle mode. Created DrawableMap component and geometry utilities for point-in-polygon calculations.
 - **2025-11-03 23:15:00** â€" Enabled frontend-backend CORS, delivered live customer city endpoint, and documented the file upload workflow for UAT prep.
@@ -290,3 +290,4 @@ Testing status will remain pending until automated and manual tests are created 
 Codex auto-updates this file on every project change.
 
 - **2025-11-09 23:30:00** — Implemented 5 major UX features: (1) Column mapping interface with auto-suggestions for CSV/Excel uploads, (2) Filter column selection in mapping modal, (3) "All Cities" view option with performance optimizations (adaptive marker sizes, pagination warnings), (4) Fixed download functionality with proper MIME types and toast notifications, (5) GeoJSON export in EasyTerritory format with auto-generation for all zone/route runs. Created testing documentation and sample data.
+- **2025-12-04 15:00:00** — Enhanced clustering zoning method with three critical improvements: (1) Fixed geographic distance calculation using Cartesian projection instead of incorrect Euclidean distance on lat/lon coordinates, (2) Added depot-weighted clustering to ensure zones are created near distribution center for logistics efficiency, (3) Implemented automatic constraint enforcement with iterative splitting to respect max_customers_per_zone limits. Updated dispatcher to support new parameters. Created comprehensive testing guides and documentation.

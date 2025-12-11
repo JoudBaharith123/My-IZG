@@ -8,7 +8,7 @@ import { CITY_VIEWPORTS, DEFAULT_VIEWPORT } from '../../config/cityViewports'
 import { useCustomerCities } from '../../hooks/useCustomerCities'
 import { useCustomerLocations } from '../../hooks/useCustomerLocations'
 import { colorFromString } from '../../utils/color'
-import { countPointsInPolygon } from '../../utils/geometry'
+import { countPointsInPolygon, doPolygonsOverlap } from '../../utils/geometry'
 
 import {
   useGenerateZones,
@@ -55,12 +55,12 @@ const FALLBACK_CITIES = ['Jeddah', 'Riyadh', 'Dammam']
 const ALL_CITIES_VALUE = 'all'
 
 export function ZoningWorkspacePage() {
-  const [city, setCity] = useState('')
+  const [city, setCity] = useState('')  // No default city
   const [method, setMethod] = useState<Method>('clustering')
-  const [targetZones, setTargetZones] = useState(12)
-  const [rotationOffset, setRotationOffset] = useState(15)
+  const [targetZones, setTargetZones] = useState(5)  // Changed from 12 to 5 (more reasonable default)
+  const [rotationOffset, setRotationOffset] = useState(0)  // Changed from 15 to 0
   const [thresholds, setThresholds] = useState<number[]>([15, 30, 45, 60])
-  const [maxCustomersPerZone, setMaxCustomersPerZone] = useState(500)
+  const [maxCustomersPerZone, setMaxCustomersPerZone] = useState(1000)  // Changed from 500 to 1000 (allows larger zones)
   const [applyBalancing, setApplyBalancing] = useState(true)
   const [balanceTolerance, setBalanceTolerance] = useState(20)
   const [manualPolygons, setManualPolygons] = useState<ManualPolygonForm[]>(defaultPolygons)
@@ -68,6 +68,7 @@ export function ZoningWorkspacePage() {
   const [lastError, setLastError] = useState<string | null>(null)
   const [runMeta, setRunMeta] = useState<{ durationSeconds: number; timestamp: string } | null>(null)
   const [activeFilters, setActiveFilters] = useState<Record<string, string>>({})
+  const [selectedZone, setSelectedZone] = useState<string>('')  // Filter by generated zone
 
   const { mutateAsync: generateZones, isPending, isError } = useGenerateZones()
   const { data: cityCatalog } = useCustomerCities()
@@ -105,7 +106,7 @@ export function ZoningWorkspacePage() {
   } = useCustomerLocations({
     city: city || ALL_CITIES_VALUE,
     filters: activeFilters,
-    pageSize: 1500,
+    pageSize: 5000,  // Increased from 1500 to show all city customers
     enabled: Boolean(city)
   })
 
@@ -240,7 +241,15 @@ export function ZoningWorkspacePage() {
     // Use smaller markers for large datasets
     const markerRadius = customerPoints.length > 2000 ? 3 : customerPoints.length > 1000 ? 4 : 6
 
-    return customerPoints.map((customer) => {
+    // Filter by selected zone if one is selected
+    const filteredCustomers = selectedZone
+      ? customerPoints.filter((customer) => {
+          const assignedZone = assignments[customer.customer_id] ?? customer.zone ?? 'Unassigned'
+          return assignedZone === selectedZone
+        })
+      : customerPoints
+
+    return filteredCustomers.map((customer) => {
       const assignedZone = assignments[customer.customer_id] ?? customer.zone ?? 'Unassigned'
       const markerColor =
         zoneColorMap[assignedZone] ??
@@ -260,25 +269,35 @@ export function ZoningWorkspacePage() {
         tooltip: `${nameParts.join(' - ')} - ${assignedZone}`,
       }
     })
-  }, [customerPoints, result, zoneColorMap])
+  }, [customerPoints, result, zoneColorMap, selectedZone])
 
   const polygonOverlays = useMemo<MapPolygon[]>(() => {
     if (!mapOverlayPolygons.length) {
       return []
     }
-    return mapOverlayPolygons
+    // Filter by selected zone if one is selected
+    const filteredPolygons = selectedZone
+      ? mapOverlayPolygons.filter((polygon) => polygon.zone_id === selectedZone)
+      : mapOverlayPolygons
+    
+    return filteredPolygons
       .filter((polygon) => polygon.coordinates.length >= 3)
       .map((polygon) => {
         const color = zoneColorMap[polygon.zone_id] ?? colorFromString(polygon.zone_id)
+        const customerCount = (polygon as any).customer_count || 0
+        const tooltipText = customerCount > 0 
+          ? `${polygon.zone_id} (${customerCount} customers)`
+          : polygon.zone_id
+        
         return {
           id: polygon.zone_id + '-polygon',
           positions: polygon.coordinates.map((pair) => [pair[0], pair[1]]) as Array<[number, number]>,
           color,
           fillColor: color,
-          tooltip: polygon.zone_id,
+          tooltip: tooltipText,  // Show zone ID + customer count
         }
       })
-  }, [mapOverlayPolygons, zoneColorMap])
+  }, [mapOverlayPolygons, zoneColorMap, selectedZone])
 
   const handleRun = useCallback(async () => {
     setLastError(null)
@@ -330,6 +349,7 @@ export function ZoningWorkspacePage() {
       const durationSeconds = Number(((performance.now() - start) / 1000).toFixed(2))
       setResult(response)
       setRunMeta({ durationSeconds, timestamp: new Date().toISOString() })
+      setSelectedZone('')  // Reset zone filter when new zones are generated
     } catch (error) {
       const message =
         (error as { response?: { data?: { detail?: string } } }).response?.data?.detail ??
@@ -351,15 +371,16 @@ export function ZoningWorkspacePage() {
   ])
 
   const handleReset = useCallback(() => {
-    setTargetZones(12)
-    setRotationOffset(15)
+    setTargetZones(5)  // Changed from 12 to 5
+    setRotationOffset(0)  // Changed from 15 to 0
     setThresholds([15, 30, 45, 60])
-    setMaxCustomersPerZone(500)
+    setMaxCustomersPerZone(1000)  // Changed from 500 to 1000
     setManualPolygons(defaultPolygons)
     setApplyBalancing(true)
     setBalanceTolerance(20)
     setResult(null)
     setRunMeta(null)
+    setSelectedZone('')  // Reset zone filter
     setLastError(null)
   }, [])
 
@@ -403,11 +424,66 @@ export function ZoningWorkspacePage() {
             </Field>
           </section>
 
+          {/* Zone Filter - Shows Generated Zones (including manual) */}
+          <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-800 dark:bg-background-dark/60">
+            <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+              Zone (Generated)
+            </label>
+            <select
+              value={selectedZone}
+              onChange={(e) => setSelectedZone(e.target.value)}
+              disabled={
+                (method === 'manual' && manualPolygons.filter(p => p.coordinates).length === 0) ||
+                (method !== 'manual' && (!result || !result.counts || !Array.isArray(result.counts) || result.counts.length === 0))
+              }
+              className="w-full rounded-lg border border-gray-300 bg-background-light px-3 py-2 text-sm text-gray-900 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/40 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {method === 'manual' ? (
+                <>
+                  <option value="">All Zones</option>
+                  {manualPolygons
+                    .filter((p) => p.coordinates && p.zoneId)
+                    .sort((a, b) => a.zoneId.localeCompare(b.zoneId))
+                    .map((polygon) => {
+                      const coords = polygon.coordinates.split('\n')
+                        .map((line) => line.trim())
+                        .filter(Boolean)
+                        .map((line) => {
+                          const parts = line.split(',')
+                          return [Number(parts[0]), Number(parts[1])] as [number, number]
+                        })
+                        .filter((coord) => Number.isFinite(coord[0]) && Number.isFinite(coord[1]))
+                      const customerCount = coords.length >= 3 ? countPointsInPolygon(customerPoints, coords) : 0
+                      return (
+                        <option key={polygon.id} value={polygon.zoneId}>
+                          {polygon.zoneId} ({customerCount} customers)
+                        </option>
+                      )
+                    })}
+                </>
+              ) : result && result.counts && Array.isArray(result.counts) && result.counts.length > 0 ? (
+                <>
+                  <option value="">All Zones</option>
+                  {result.counts
+                    .sort((a, b) => a.zone_id.localeCompare(b.zone_id))
+                    .map((zoneCount) => (
+                      <option key={zoneCount.zone_id} value={zoneCount.zone_id}>
+                        {zoneCount.zone_id} ({zoneCount.customer_count} customers)
+                      </option>
+                    ))}
+                </>
+              ) : (
+                <option value="">No zones generated yet</option>
+              )}
+            </select>
+          </section>
+
           <FilterPanel
             onFiltersChange={setActiveFilters}
             activeFilters={activeFilters}
-            customerCount={customerPoints.length}
+            customerCount={selectedZone ? zoneMarkers.length : customerPoints.length}
             totalCustomers={customerTotal}
+            selectedCity={city !== ALL_CITIES_VALUE ? city : undefined}
           />
 
           <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-800 dark:bg-background-dark/60 space-y-5">
@@ -442,16 +518,26 @@ export function ZoningWorkspacePage() {
           </Field>
 
           {method === 'polar' && (
-            <Field label={'Rotation offset (' + rotationOffset.toFixed(0) + '°)'}>
-              <input
-                type="range"
-                min={0}
-                max={90}
-                value={rotationOffset}
-                onChange={(event) => setRotationOffset(Number(event.target.value))}
-                className="w-full accent-primary"
-              />
-            </Field>
+            <>
+              <Field label={'Rotation offset (' + rotationOffset.toFixed(0) + '°)'}>
+                <input
+                  type="range"
+                  min={0}
+                  max={90}
+                  value={rotationOffset}
+                  onChange={(event) => setRotationOffset(Number(event.target.value))}
+                  className="w-full accent-primary"
+                />
+              </Field>
+              <div className="rounded-lg bg-blue-50 border border-blue-200 p-3 dark:bg-blue-900/20 dark:border-blue-800">
+                <p className="text-xs font-semibold text-blue-800 dark:text-blue-200 mb-1">
+                  💡 Center Point Recommendation
+                </p>
+                <p className="text-xs text-blue-700 dark:text-blue-300">
+                  Polar zones radiate from the depot/distribution center. Sectors are drawn from this central point outward at equal angles.
+                </p>
+              </div>
+            </>
           )}
 
           {method === 'isochrone' && (
@@ -489,11 +575,22 @@ export function ZoningWorkspacePage() {
             <Field label="Max customers per zone">
               <input
                 type="number"
-                min={10}
+                min={230}
+                max={5000}
                 value={maxCustomersPerZone}
-                onChange={(event) => setMaxCustomersPerZone(Number(event.target.value))}
+                onChange={(event) => {
+                  const value = Number(event.target.value)
+                  if (value >= 230) {
+                    setMaxCustomersPerZone(value)
+                  } else {
+                    setMaxCustomersPerZone(230)
+                  }
+                }}
                 className={inputClasses}
               />
+              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                Minimum: 230 customers per zone
+              </p>
             </Field>
           )}
 
@@ -678,6 +775,29 @@ export function ZoningWorkspacePage() {
                 .filter((p) => p.coordinates.length >= 3 || p.isDrawing)}
               onPolygonCreated={(coordinates) => {
                 const coordinatesStr = coordinates.map((coord) => `${coord[0].toFixed(5)},${coord[1].toFixed(5)}`).join('\n')
+                
+                // Check for overlaps with existing polygons
+                const existingPolygons = manualPolygons
+                  .filter((p) => p.coordinates && parsePolygonCoordinates(p.coordinates).length >= 3)
+                  .map((p) => ({ id: p.id, zoneId: p.zoneId, coordinates: parsePolygonCoordinates(p.coordinates) }))
+                
+                let hasOverlap = false
+                let overlappingZoneId = ''
+                
+                for (const existing of existingPolygons) {
+                  if (doPolygonsOverlap(coordinates, existing.coordinates)) {
+                    hasOverlap = true
+                    overlappingZoneId = existing.zoneId
+                    break
+                  }
+                }
+                
+                if (hasOverlap) {
+                  // Show error and don't save the polygon
+                  setLastError(`Cannot create overlapping zone! This polygon overlaps with zone "${overlappingZoneId}". Each zone must be unique and not overlap with others.`)
+                  return
+                }
+                
                 // Find the polygon that's in drawing mode
                 const drawingPolygon = manualPolygons.find((p) => p.isDrawing)
 
@@ -701,6 +821,42 @@ export function ZoningWorkspacePage() {
               }}
               onPolygonEdited={(polygonId, coordinates) => {
                 const coordinatesStr = coordinates.map((coord) => `${coord[0].toFixed(5)},${coord[1].toFixed(5)}`).join('\n')
+                
+                // Check for overlaps with OTHER existing polygons (not the one being edited)
+                const otherPolygons = manualPolygons
+                  .filter((p) => p.id !== polygonId && p.coordinates)
+                  .map((p) => {
+                    const coords = p.coordinates.split('\n')
+                      .map((line) => line.trim())
+                      .filter(Boolean)
+                      .map((line) => {
+                        const parts = line.split(',')
+                        return [Number(parts[0]), Number(parts[1])] as [number, number]
+                      })
+                      .filter((coord) => Number.isFinite(coord[0]) && Number.isFinite(coord[1]))
+                    return { id: p.id, zoneId: p.zoneId, coordinates: coords }
+                  })
+                  .filter((p) => p.coordinates.length >= 3)
+                
+                let hasOverlap = false
+                let overlappingZoneId = ''
+                
+                for (const other of otherPolygons) {
+                  if (doPolygonsOverlap(coordinates, other.coordinates)) {
+                    hasOverlap = true
+                    overlappingZoneId = other.zoneId
+                    break
+                  }
+                }
+                
+                if (hasOverlap) {
+                  // Show error and revert the edit
+                  setLastError(`Cannot edit zone - it would overlap with zone "${overlappingZoneId}"! Each zone must be unique and not overlap with others.`)
+                  // Don't update the polygon
+                  return
+                }
+                
+                // No overlap, update the polygon
                 console.log('📝 Updating polygon', polygonId, 'with new coordinates')
                 setManualPolygons(
                   manualPolygons.map((p) => (p.id === polygonId ? { ...p, coordinates: coordinatesStr } : p))

@@ -8,14 +8,31 @@ export type ColumnValuesResponse = {
   returned: number
 }
 
-export function useColumnValues(columnName: string | null, enabled: boolean = true) {
+export type UseColumnValuesOptions = {
+  city?: string
+  enabled?: boolean
+}
+
+export function useColumnValues(
+  columnName: string | null, 
+  options: UseColumnValuesOptions = {}
+) {
+  const { city, enabled = true } = options
+  
   return useQuery({
-    queryKey: ['column-values', columnName],
+    queryKey: ['column-values', columnName, city || 'all'],
     queryFn: async (): Promise<ColumnValuesResponse> => {
       if (!columnName) {
         throw new Error('Column name is required')
       }
-      const { data } = await apiClient.get<ColumnValuesResponse>(`/customers/filter-values/${columnName}`)
+      const params: Record<string, string> = {}
+      if (city && city !== 'all') {
+        params.city = city
+      }
+      const { data } = await apiClient.get<ColumnValuesResponse>(
+        `/customers/filter-values/${columnName}`,
+        { params }
+      )
       return data
     },
     enabled: enabled && !!columnName,

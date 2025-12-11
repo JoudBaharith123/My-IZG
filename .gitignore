@@ -51,7 +51,23 @@ Thumbs.db
 
 # Data files (keep templates, ignore outputs)
 data/outputs/
+data/uploads/
 *.log
+
+# Documentation files (temporary)
+*.md
+!README.md
+!docs/**/*.md
+!psd/**/*.md
+!manual_testing/**/*.md
+!SETUP_GUIDE.md
+!GITHUB_SUPABASE_SETUP.md
+!PUSH_TO_GITHUB.md
+!DATABASE_INTEGRATION_PLAN.md
+!DATABASE_STATUS.md
+
+# Test images
+TestImg/
 
 # Temporary files
 *.tmp

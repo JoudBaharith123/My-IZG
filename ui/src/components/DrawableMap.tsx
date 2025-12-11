@@ -359,12 +359,12 @@ function DrawControl({
         layer.editing?.disable()
       }
 
-      // Add tooltip with zone name and customer count - make it permanent and visible
+      // Add tooltip with zone name and customer count - show on hover only
       if (polygon.customerCount !== undefined || polygon.zoneId) {
         const zoneName = polygon.zoneId || 'Zone'
         const customerInfo = polygon.customerCount !== undefined ? `${polygon.customerCount} customers` : 'No customers'
         layer.bindTooltip(`<strong>${zoneName}</strong><br/>📍 ${customerInfo}`, {
-          permanent: true,
+          permanent: false,  // Show on hover only
           direction: 'center',
           className: 'customer-count-label',
           opacity: 0.9
