@@ -24,6 +24,17 @@ if ($checkDeps -notlike "*OK*") {
     Write-Host "⚙️ Installing dependencies..." -ForegroundColor Yellow
     python -m pip install --upgrade pip
     pip install -r requirements.txt
+    
+    # Try to install ortools separately (optional, may fail on Python 3.12+)
+    Write-Host "📦 Attempting to install OR-Tools (optional for routing)..." -ForegroundColor Yellow
+    $ortoolsResult = python -m pip install ortools 2>&1
+    if ($ortoolsResult -like "*ERROR*" -or $ortoolsResult -like "*No matching*") {
+        Write-Host "⚠️  OR-Tools not installed (requires Python 3.8-3.11)" -ForegroundColor Yellow
+        Write-Host "   Routing features will be unavailable, but zoning will work fine." -ForegroundColor Yellow
+    } else {
+        Write-Host "✅ OR-Tools installed successfully" -ForegroundColor Green
+    }
+    
     Write-Host "✅ Dependencies installed" -ForegroundColor Green
 } else {
     Write-Host "✅ Dependencies already installed" -ForegroundColor Green

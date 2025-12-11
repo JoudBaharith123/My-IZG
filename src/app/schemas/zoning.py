@@ -27,6 +27,7 @@ class ZoningRequest(BaseModel):
     polygons: Optional[Sequence[ManualPolygon]] = Field(default=None, description="Manual zoning polygons.")
     balance: bool = Field(default=False, description="Apply workload balancing across zones after generation.")
     balance_tolerance: float = Field(default=0.2, ge=0.0, description="Allowed variance when balancing zones.")
+    persist: bool = Field(default=True, description="Whether to persist outputs to files.")
     requested_by: Optional[str] = Field(default=None, description="Person or system requesting the run.")
     run_label: Optional[str] = Field(default=None, description="Friendly name for persisted outputs.")
     tags: Optional[Sequence[str]] = Field(default=None, description="Tags to associate with the run.")

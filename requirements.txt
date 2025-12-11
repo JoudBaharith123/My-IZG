@@ -7,5 +7,10 @@ scikit-learn>=1.4.0
 shapely>=2.0.3
 httpx>=0.27.0
 openpyxl>=3.1.2
-ortools>=9.10.0
 supabase>=2.10.0
+
+# OR-Tools (optional - only needed for routing optimization)
+# Note: OR-Tools supports Python 3.8-3.11 only
+# If you're using Python 3.12+, you can skip this or use Python 3.11
+# To install OR-Tools (if using Python 3.8-3.11), uncomment the line below:
+# ortools>=9.10.0

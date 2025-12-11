@@ -146,6 +146,7 @@ def get_customers_for_location(location: str, source: Optional[Path] = None) -> 
 
 @functools.lru_cache(maxsize=1)
 def get_dc_lookup() -> dict[str, Depot]:
+    """Get depot lookup dictionary. Cache is cleared when depots are synced to database."""
     lookup: dict[str, Depot] = {}
     for depot in get_depots():
         key = depot.code.lower()
@@ -154,6 +155,11 @@ def get_dc_lookup() -> dict[str, Depot]:
         lookup.setdefault(compact, depot)
         lookup.setdefault(compact[:3], depot)
     return lookup
+
+
+def clear_dc_lookup_cache() -> None:
+    """Clear the depot lookup cache. Call this after syncing depots to database."""
+    get_dc_lookup.cache_clear()
 
 
 def resolve_depot(city: str) -> Optional[Depot]:
@@ -165,15 +171,49 @@ def resolve_depot(city: str) -> Optional[Depot]:
         "رياض": "riyadh",
         "الدمام": "dammam",
         "دمام": "dammam",
-        "مكة": "makkah",
-        "مكة المكرمة": "makkah",
+        "مكة": "jeddah",  # Makkah uses Jeddah depot
+        "مكة المكرمة": "jeddah",  # Makkah uses Jeddah depot
         "المدينة": "madinah",
         "المدينة المنورة": "madinah",
         "تبوك": "tabuk",
         "خميس مشيط": "khames mushait",
         "بريدة": "buraidah",
         "جيزان": "jizan",
+        "جازان": "jizan",  # Alternative spelling
         "حائل": "hail",
+        "الطائف": "taif",
+        "طائف": "taif",
+        "ينبع": "yanbu",
+        "نجران": "najran",
+        "ابها": "khames mushait",  # Abha uses Khamis Mushait depot
+        "عسير": "khames mushait",  # Asir uses Khamis Mushait depot
+    }
+    
+    # Alternative English spellings and variations
+    ALTERNATIVE_NAMES = {
+        "makkah": "jeddah",  # Makkah uses Jeddah depot
+        "mecca": "jeddah",
+        "madinah": "madinah",
+        "medina": "madinah",
+        "medinah": "madinah",
+        "khames": "khames mushait",
+        "khamis": "khames mushait",
+        "mushait": "khames mushait",
+        "abha": "khames mushait",
+        "asir": "khames mushait",
+        "baha": "jeddah",  # Al-Baha uses Jeddah depot (nearest)
+        "الباحة": "jeddah",
+    }
+    
+    # Regional mappings - cities without direct depots mapped to nearest depot
+    REGIONAL_MAPPINGS = {
+        "محايل عسير": "khames mushait",  # Muhayil Asir uses Khamis Mushait
+        "القصيم": "buraidah",  # Al-Qassim region uses Buraidah
+        "عنيزة": "buraidah",  # Unaizah uses Buraidah
+        "عرعر": "sakaka",  # Arar uses Sakaka (nearest)
+        "الرس": "buraidah",  # Ar Rass uses Buraidah
+        "القنفذة": "jeddah",  # Al Qunfudhah uses Jeddah
+        "أبو عريش": "jizan",  # Abu Arish uses Jizan
     }
     
     depot_map = get_dc_lookup()
@@ -189,15 +229,42 @@ def resolve_depot(city: str) -> Optional[Depot]:
     if depot:
         return depot
     
-    # Try first 3 characters
-    depot = depot_map.get(normalized[:3])
-    if depot:
-        return depot
+    # Try alternative English names
+    if normalized in ALTERNATIVE_NAMES:
+        alt_name = ALTERNATIVE_NAMES[normalized]
+        depot = depot_map.get(alt_name)
+        if depot:
+            return depot
     
     # Try Arabic to English translation
     if normalized in CITY_TRANSLATIONS:
         english_name = CITY_TRANSLATIONS[normalized]
-        return depot_map.get(english_name)
+        depot = depot_map.get(english_name)
+        if depot:
+            return depot
+    
+    # Try regional mappings for cities without direct depots
+    if normalized in REGIONAL_MAPPINGS:
+        depot_name = REGIONAL_MAPPINGS[normalized]
+        depot = depot_map.get(depot_name)
+        if depot:
+            return depot
+    
+    # Try partial matching - check if city name contains depot name or vice versa
+    for depot_code, depot_obj in depot_map.items():
+        depot_normalized = depot_code.lower().replace(" ", "")
+        city_normalized = normalized.replace(" ", "")
+        
+        # Check if depot code is contained in city name or vice versa
+        if depot_normalized in city_normalized or city_normalized in depot_normalized:
+            # Additional validation: ensure it's a meaningful match (at least 3 chars)
+            if len(depot_normalized) >= 3 and len(city_normalized) >= 3:
+                return depot_obj
+    
+    # Try first 3 characters as last resort
+    depot = depot_map.get(normalized[:3])
+    if depot:
+        return depot
     
     return None
 
