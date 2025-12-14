@@ -18,6 +18,7 @@ import {
   type GenerateZonesResponse,
   type ManualPolygonPayload,
 } from '../../hooks/useGenerateZones'
+import { useZonesFromDatabase } from '../../hooks/useZonesFromDatabase'
 
 type Method = 'polar' | 'isochrone' | 'clustering' | 'manual'
 
@@ -73,6 +74,12 @@ export function ZoningWorkspacePage() {
 
   const { mutateAsync: generateZones, isPending, isError } = useGenerateZones()
   const { data: cityCatalog } = useCustomerCities()
+  
+  // Fetch zones from database when city changes and no result exists
+  const { data: dbZones } = useZonesFromDatabase(
+    city && city !== ALL_CITIES_VALUE ? city : undefined,
+    undefined // Don't filter by method - show all zones for the city
+  )
   const cityOptions = useMemo(() => {
     const cities: string[] = []
     // Add "All Cities" as first option
@@ -115,30 +122,49 @@ export function ZoningWorkspacePage() {
     return CITY_VIEWPORTS[city] ?? DEFAULT_VIEWPORT
   }, [city])
 
+  // Use database zones for counts and assignments when no result exists
+  const effectiveResult = useMemo(() => {
+    // Prefer result from generation, otherwise use zones from database
+    const effective = result || dbZones
+    if (dbZones && !result) {
+      console.log('🗺️ Using zones from database:', {
+        polygonCount: dbZones.metadata?.map_overlays?.polygons?.length ?? 0,
+        city: dbZones.city,
+        method: dbZones.method,
+      })
+    }
+    return effective
+  }, [result, dbZones])
+  
   const balancingMetadata = useMemo<BalancingMetadata | null>(() => {
-    if (!result?.metadata) {
+    if (!effectiveResult?.metadata) {
       return null
     }
-    const metadata = result.metadata as { balancing?: BalancingMetadata }
+    const metadata = effectiveResult.metadata as { balancing?: BalancingMetadata }
     return metadata.balancing ?? null
-  }, [result])
+  }, [effectiveResult])
 
   const mapOverlayPolygons = useMemo(() => {
-    const metadata = result?.metadata as { map_overlays?: { polygons?: Array<Record<string, unknown>> } } | undefined
+    if (!effectiveResult?.metadata) {
+      return []
+    }
+    
+    const metadata = effectiveResult.metadata as { map_overlays?: { polygons?: Array<Record<string, unknown>> } } | undefined
     return (metadata?.map_overlays?.polygons ?? []) as Array<{
       zone_id: string
       coordinates: Array<[number, number]>
       centroid?: [number, number]
       source?: string
+      customer_count?: number
     }>
-  }, [result])
+  }, [effectiveResult])
 
   const zoneColorMap = useMemo(() => {
     const zoneSet = new Set<string>()
     let hasUnassigned = false
 
-    if (result?.assignments) {
-      Object.values(result.assignments).forEach((zoneId) => {
+    if (effectiveResult?.assignments) {
+      Object.values(effectiveResult.assignments).forEach((zoneId) => {
         if (zoneId) {
           zoneSet.add(zoneId)
         }
@@ -152,7 +178,7 @@ export function ZoningWorkspacePage() {
       } else {
         hasUnassigned = true
       }
-      if (result?.assignments && !(location.customer_id in result.assignments)) {
+      if (effectiveResult?.assignments && !(location.customer_id in effectiveResult.assignments)) {
         hasUnassigned = true
       }
     })
@@ -175,13 +201,13 @@ export function ZoningWorkspacePage() {
     }
 
     return palette
-  }, [customerPoints, mapOverlayPolygons, result])
+  }, [customerPoints, mapOverlayPolygons, effectiveResult])
 
   const summaryRows = useMemo<SummaryRow[]>(() => {
-    if (!result?.counts?.length) {
+    if (!effectiveResult?.counts?.length) {
       return []
     }
-    const counts = result.counts
+    const counts = effectiveResult.counts
     const total = counts.reduce((acc, row) => acc + row.customer_count, 0)
     if (!total) {
       return counts.map((row) => ({ zone: row.zone_id, customers: row.customer_count, delta: '+0.0%', tolerance: 'in' }))
@@ -201,7 +227,7 @@ export function ZoningWorkspacePage() {
         tolerance: withinTolerance ? 'in' : 'out',
       }
     })
-  }, [applyBalancing, balanceTolerance, balancingMetadata?.tolerance, result])
+  }, [applyBalancing, balanceTolerance, balancingMetadata?.tolerance, effectiveResult])
 
   const transfers = useMemo<TransferRow[]>(() => {
     const list = balancingMetadata?.transfers ?? []
@@ -214,17 +240,26 @@ export function ZoningWorkspacePage() {
   }, [balancingMetadata?.transfers])
 
   const lastRunLabel = useMemo(() => {
-    if (!runMeta || !result?.counts) {
-      return 'Not executed yet'
+    // Show run metadata only for newly generated zones, otherwise show zone count from database
+    if (runMeta && result?.counts) {
+      const timestamp = new Date(runMeta.timestamp)
+      const zoneCount = result.counts.length
+      let label = timestamp.toLocaleString() + ' - ' + zoneCount.toString() + ' zone'
+      if (zoneCount !== 1) {
+        label += 's'
+      }
+      return label
+    } else if (effectiveResult?.counts && effectiveResult.counts.length > 0) {
+      const zoneCount = effectiveResult.counts.length
+      let label = zoneCount.toString() + ' zone'
+      if (zoneCount !== 1) {
+        label += 's'
+      }
+      label += ' (from database)'
+      return label
     }
-    const timestamp = new Date(runMeta.timestamp)
-    const zoneCount = result.counts.length
-    let label = timestamp.toLocaleString() + ' - ' + zoneCount.toString() + ' zone'
-    if (zoneCount !== 1) {
-      label += 's'
-    }
-    return label
-  }, [result?.counts, runMeta])
+    return 'Not executed yet'
+  }, [result?.counts, effectiveResult?.counts, runMeta])
 
   const mapCaption = useMemo(() => {
     if (!city) {
@@ -238,7 +273,7 @@ export function ZoningWorkspacePage() {
     if (!customerPoints.length) {
       return []
     }
-    const assignments = result?.assignments ?? {}
+    const assignments = effectiveResult?.assignments ?? {}
     // Use smaller markers for large datasets
     const markerRadius = customerPoints.length > 2000 ? 3 : customerPoints.length > 1000 ? 4 : 6
 
@@ -441,9 +476,9 @@ export function ZoningWorkspacePage() {
             <select
               value={selectedZone}
               onChange={(e) => setSelectedZone(e.target.value)}
-              disabled={
+                disabled={
                 (method === 'manual' && manualPolygons.filter(p => p.coordinates).length === 0) ||
-                (method !== 'manual' && (!result || !result.counts || !Array.isArray(result.counts) || result.counts.length === 0))
+                (method !== 'manual' && (!effectiveResult || !effectiveResult.counts || !Array.isArray(effectiveResult.counts) || effectiveResult.counts.length === 0))
               }
               className="w-full rounded-lg border border-gray-300 bg-background-light px-3 py-2 text-sm text-gray-900 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/40 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
             >
@@ -470,10 +505,10 @@ export function ZoningWorkspacePage() {
                       )
                     })}
                 </>
-              ) : result && result.counts && Array.isArray(result.counts) && result.counts.length > 0 ? (
+              ) : effectiveResult && effectiveResult.counts && Array.isArray(effectiveResult.counts) && effectiveResult.counts.length > 0 ? (
                 <>
                   <option value="">All Zones</option>
-                  {result.counts
+                  {effectiveResult.counts
                     .sort((a, b) => a.zone_id.localeCompare(b.zone_id))
                     .map((zoneCount) => (
                       <option key={zoneCount.zone_id} value={zoneCount.zone_id}>

@@ -8,6 +8,7 @@ import { useCustomerCities } from '../../hooks/useCustomerCities'
 import { useCustomerLocations } from '../../hooks/useCustomerLocations'
 import { useOptimizeRoutes, type OptimizeRoutesPayload, type OptimizeRoutesResponse } from '../../hooks/useOptimizeRoutes'
 import { useZoneSummaries, type ZoneSummary } from '../../hooks/useZoneSummaries'
+import { useDatabaseZoneSummaries } from '../../hooks/useDatabaseZoneSummaries'
 import { colorFromString } from '../../utils/color'
 
 type TabKey = 'metrics' | 'sequence' | 'downloads'
@@ -55,7 +56,9 @@ export function RoutingWorkspacePage() {
   const [lastError, setLastError] = useState<string | null>(null)
 
   const { data: customerCities, isLoading: isCitiesLoading } = useCustomerCities()
-  const { data: zoneSummaries, isLoading: isZonesLoading } = useZoneSummaries()
+  
+  // Use database zones instead of customer zones (from CSV)
+  const { data: zoneSummaries, isLoading: isZonesLoading } = useDatabaseZoneSummaries(selectedCity || undefined)
   const { mutateAsync: optimizeRoutes, isPending: isOptimizing } = useOptimizeRoutes()
   const {
     items: zoneCustomerPoints,

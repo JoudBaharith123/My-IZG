@@ -7,6 +7,7 @@ from typing import Any
 from ..db.supabase import get_supabase_client
 from ..data.customers_repository import resolve_depot
 from ..services.export.geojson import polygon_to_wkt
+import re
 
 
 def save_zones_to_database(
@@ -57,13 +58,14 @@ def save_zones_to_database(
                 # Get customer count for this zone
                 customer_count = count_map.get(zone_id, 0)
                 
-                # Prepare metadata
+                # Prepare metadata (store coordinates as backup for retrieval)
                 metadata = {
                     "zone_id": zone_id,
                     "city": city,
                     "method": method,
                     "centroid": polygon.get("centroid"),
                     "source": polygon.get("source", "unknown"),
+                    "coordinates": coordinates,  # Store coordinates in metadata as backup
                 }
                 
                 # Add any additional metadata from the response
@@ -158,6 +160,83 @@ def save_zones_to_database(
         logging.warning(f"Failed to save zones to database: {e}")
 
 
+def wkt_to_coordinates(wkt: str) -> list[tuple[float, float]]:
+    """Convert WKT POLYGON string to coordinates.
+    
+    Args:
+        wkt: WKT POLYGON string (format: POLYGON((lon lat, lon lat, ...)))
+        
+    Returns:
+        List of [lat, lon] coordinate pairs
+    """
+    if not wkt:
+        return []
+    
+    # Handle WKT format
+    if wkt.startswith("POLYGON"):
+        # Extract coordinates from POLYGON((...)) format
+        # Match the content between the double parentheses
+        match = re.search(r'POLYGON\(\(([^)]+)\)\)', wkt)
+        if not match:
+            return []
+        
+        coord_string = match.group(1)
+        # Split by comma and parse lon lat pairs
+        coords = []
+        for pair in coord_string.split(','):
+            pair = pair.strip()
+            parts = pair.split()
+            if len(parts) >= 2:
+                try:
+                    lon = float(parts[0])
+                    lat = float(parts[1])
+                    # Return as [lat, lon] to match frontend format
+                    coords.append((lat, lon))
+                except (ValueError, IndexError):
+                    continue
+        
+        return coords
+    
+    return []
+
+
+def geojson_to_coordinates(geojson: dict[str, Any]) -> list[tuple[float, float]]:
+    """Convert GeoJSON geometry to coordinates.
+    
+    Args:
+        geojson: GeoJSON geometry object (from Supabase PostGIS)
+        
+    Returns:
+        List of [lat, lon] coordinate pairs
+    """
+    if not geojson:
+        return []
+    
+    # Handle GeoJSON format from Supabase
+    # Supabase returns PostGIS geometry as: {"type": "Polygon", "coordinates": [[[lon, lat], ...]]}
+    if isinstance(geojson, dict):
+        geom_type = geojson.get("type", "").upper()
+        coords_array = geojson.get("coordinates", [])
+        
+        if geom_type == "POLYGON" and coords_array:
+            # Polygon coordinates are [[[lon, lat], [lon, lat], ...]]
+            # Take the first ring (exterior ring)
+            ring = coords_array[0] if coords_array else []
+            coords = []
+            for coord in ring:
+                if len(coord) >= 2:
+                    try:
+                        lon = float(coord[0])
+                        lat = float(coord[1])
+                        # Return as [lat, lon] to match frontend format
+                        coords.append((lat, lon))
+                    except (ValueError, TypeError):
+                        continue
+            return coords
+    
+    return []
+
+
 def get_zones_from_database(city: str | None = None, method: str | None = None) -> list[dict[str, Any]]:
     """Retrieve zones from database.
     
@@ -173,6 +252,8 @@ def get_zones_from_database(city: str | None = None, method: str | None = None) 
         return []
     
     try:
+        # Select all columns including geometry (Supabase will return PostGIS geometry as GeoJSON)
+        # Note: We rely on metadata.coordinates as primary source, geometry is fallback
         query = supabase.table("zones").select("*")
         
         if city:
@@ -183,7 +264,14 @@ def get_zones_from_database(city: str | None = None, method: str | None = None) 
             query = query.eq("method", method)
         
         response = query.order("created_at", desc=True).execute()
-        return response.data if response.data else []
+        zones_data = response.data if response.data else []
+        
+        # Log for debugging
+        if zones_data:
+            import logging
+            logging.info(f"Retrieved {len(zones_data)} zones from database (city={city}, method={method})")
+        
+        return zones_data
     except Exception as e:
         import logging
         logging.warning(f"Failed to retrieve zones from database: {e}")
