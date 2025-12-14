@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS zones (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name TEXT NOT NULL,
     geometry GEOMETRY(POLYGON, 4326),
+    geometry_wkt TEXT, -- Temporary column for WKT input (converted by trigger)
     depot_code TEXT,
     customer_count INTEGER DEFAULT 0,
     method TEXT, -- 'polar', 'isochrone', 'clustering', 'manual'
@@ -49,6 +50,23 @@ CREATE TABLE IF NOT EXISTS zones (
 
 CREATE INDEX IF NOT EXISTS idx_zones_geometry ON zones USING GIST(geometry);
 CREATE INDEX IF NOT EXISTS idx_zones_depot ON zones(depot_code);
+
+-- Trigger to convert WKT to geometry
+CREATE OR REPLACE FUNCTION convert_wkt_to_geometry()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF NEW.geometry_wkt IS NOT NULL AND NEW.geometry IS NULL THEN
+        NEW.geometry := ST_GeomFromText(NEW.geometry_wkt, 4326);
+        NEW.geometry_wkt := NULL; -- Clear after conversion
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER zones_convert_wkt
+    BEFORE INSERT OR UPDATE ON zones
+    FOR EACH ROW
+    EXECUTE FUNCTION convert_wkt_to_geometry();
 
 -- ============================================
 -- ROUTES TABLE
@@ -146,6 +164,34 @@ BEGIN
         ST_SetSRID(ST_MakePoint(c.longitude, c.latitude), 4326)
     )
     WHERE z.id = zone_id_param;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Insert zone with WKT geometry conversion
+CREATE OR REPLACE FUNCTION insert_zone_with_geometry(
+    zone_name TEXT,
+    geometry_wkt TEXT,
+    depot_code TEXT DEFAULT NULL,
+    customer_count INTEGER DEFAULT 0,
+    method TEXT DEFAULT NULL,
+    metadata JSONB DEFAULT '{}'::jsonb
+)
+RETURNS UUID AS $$
+DECLARE
+    zone_id UUID;
+BEGIN
+    INSERT INTO zones (name, geometry, depot_code, customer_count, method, metadata)
+    VALUES (
+        zone_name,
+        ST_GeomFromText(geometry_wkt, 4326),
+        depot_code,
+        customer_count,
+        method,
+        metadata
+    )
+    RETURNING id INTO zone_id;
+    
+    RETURN zone_id;
 END;
 $$ LANGUAGE plpgsql;
 

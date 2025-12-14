@@ -61,6 +61,7 @@ export function ZoningWorkspacePage() {
   const [rotationOffset, setRotationOffset] = useState(0)  // Changed from 15 to 0
   const [thresholds, setThresholds] = useState<number[]>([15, 30, 45, 60])
   const [maxCustomersPerZone, setMaxCustomersPerZone] = useState(1000)  // Changed from 500 to 1000 (allows larger zones)
+  const [maxCustomersInput, setMaxCustomersInput] = useState<string>('1000')  // Local state for input field
   const [applyBalancing, setApplyBalancing] = useState(true)
   const [balanceTolerance, setBalanceTolerance] = useState(20)
   const [manualPolygons, setManualPolygons] = useState<ManualPolygonForm[]>(defaultPolygons)
@@ -370,11 +371,19 @@ export function ZoningWorkspacePage() {
     thresholds,
   ])
 
+  // Sync input state when maxCustomersPerZone changes externally
+  useEffect(() => {
+    if (method === 'clustering') {
+      setMaxCustomersInput(String(maxCustomersPerZone))
+    }
+  }, [maxCustomersPerZone, method])
+
   const handleReset = useCallback(() => {
     setTargetZones(5)  // Changed from 12 to 5
     setRotationOffset(0)  // Changed from 15 to 0
     setThresholds([15, 30, 45, 60])
     setMaxCustomersPerZone(1000)  // Changed from 500 to 1000
+    setMaxCustomersInput('1000')
     setManualPolygons(defaultPolygons)
     setApplyBalancing(true)
     setBalanceTolerance(20)
@@ -572,24 +581,36 @@ export function ZoningWorkspacePage() {
           )}
 
           {method === 'clustering' && (
-            <Field label="Max customers per zone">
+            <Field label="Target max customers per zone">
               <input
                 type="number"
                 min={230}
                 max={5000}
-                value={maxCustomersPerZone}
+                value={maxCustomersInput}
                 onChange={(event) => {
+                  // Allow free typing - update local input state
+                  setMaxCustomersInput(event.target.value)
+                }}
+                onBlur={(event) => {
+                  // Validate when user finishes editing (clicks away)
                   const value = Number(event.target.value)
-                  if (value >= 230) {
-                    setMaxCustomersPerZone(value)
+                  if (isNaN(value) || value < 230) {
+                    const finalValue = 230
+                    setMaxCustomersPerZone(finalValue)
+                    setMaxCustomersInput(String(finalValue))
+                  } else if (value > 5000) {
+                    const finalValue = 5000
+                    setMaxCustomersPerZone(finalValue)
+                    setMaxCustomersInput(String(finalValue))
                   } else {
-                    setMaxCustomersPerZone(230)
+                    setMaxCustomersPerZone(value)
+                    setMaxCustomersInput(String(value))
                   }
                 }}
                 className={inputClasses}
               />
               <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                Minimum: 230 customers per zone
+                Target value (not enforced). Minimum: 230 customers per zone.
               </p>
             </Field>
           )}

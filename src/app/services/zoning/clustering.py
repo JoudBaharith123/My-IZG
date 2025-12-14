@@ -19,7 +19,8 @@ class ClusteringZoning(ZoningStrategy):
     Features:
     - Uses UTM projection for accurate geographic distance calculations
     - Supports depot-weighted clustering to ensure zones are accessible from DC
-    - Enforces max_customers_per_zone constraint with iterative splitting
+    - Uses max_customers_per_zone as a target/guideline (not enforced)
+    - Respects minimum customers per zone (230)
     """
 
     def __init__(
@@ -216,41 +217,11 @@ class ClusteringZoning(ZoningStrategy):
         )
         labels = kmeans.fit_predict(weighted_coords)
 
-        # Enforce max_customers_per_zone constraint if specified
-        constraint_metadata = {}
-        if max_customers_per_zone:
-            labels, constraint_metadata = self._enforce_max_customers_constraint(
-                coordinates=coordinates,
-                customers=customers,
-                depot=depot,
-                initial_labels=labels,
-                max_customers_per_zone=max_customers_per_zone,
-            )
-            # Recalculate cluster centers after splitting
-            unique_labels = np.unique(labels)
-            final_zone_count = len(unique_labels)
-            if final_zone_count > target_zones:
-                # Recompute centers for all zones
-                centers = []
-                for label in unique_labels:
-                    cluster_mask = labels == label
-                    cluster_coords = coordinates[cluster_mask]
-                    center = cluster_coords.mean(axis=0)
-                    # Convert back to lat/lon
-                    lat, lon = self._convert_from_cartesian(center[0], center[1])
-                    centers.append([lat, lon])
-            else:
-                # Use original centers, convert to lat/lon
-                centers = []
-                for center_cart in kmeans.cluster_centers_:
-                    lat, lon = self._convert_from_cartesian(center_cart[0], center_cart[1])
-                    centers.append([lat, lon])
-        else:
-            # Convert Cartesian centers back to lat/lon
-            centers = []
-            for center_cart in kmeans.cluster_centers_:
-                lat, lon = self._convert_from_cartesian(center_cart[0], center_cart[1])
-                centers.append([lat, lon])
+        # Convert Cartesian centers back to lat/lon
+        centers = []
+        for center_cart in kmeans.cluster_centers_:
+            lat, lon = self._convert_from_cartesian(center_cart[0], center_cart[1])
+            centers.append([lat, lon])
 
         # Create assignments
         assignments: dict[str, str] = {}
@@ -266,19 +237,35 @@ class ClusteringZoning(ZoningStrategy):
             "uses_depot_weighting": self.use_depot_weighting,
         }
         
-        # Add constraint enforcement metadata
-        if constraint_metadata:
-            metadata.update(constraint_metadata)
+        # Store max_customers_per_zone as a target/guideline (not enforced)
+        if max_customers_per_zone:
             metadata["max_customers_per_zone"] = max_customers_per_zone
-            # Check for remaining violations
-            violations = {
+            metadata["max_customers_per_zone_note"] = "Target value (not enforced)"
+            
+            # Report actual zone sizes vs target for user information
+            # Note: max_customers_per_zone is a target/guideline, not enforced
+            zone_sizes = dict(counts)
+            min_customers_per_zone = 230  # Minimum customers per zone (guideline)
+            
+            zones_above_target = {
                 zone_id: count
-                for zone_id, count in counts.items()
-                if max_customers_per_zone and count > max_customers_per_zone * (1 + self.balance_tolerance)
+                for zone_id, count in zone_sizes.items()
+                if count > max_customers_per_zone
             }
-            if violations:
-                metadata["violations"] = violations
-            else:
-                metadata["constraint_satisfied"] = True
+            zones_below_min = {
+                zone_id: count
+                for zone_id, count in zone_sizes.items()
+                if count < min_customers_per_zone
+            }
+            
+            # Store target and minimum for reference
+            metadata["min_customers_per_zone"] = min_customers_per_zone
+            
+            if zones_above_target:
+                metadata["zones_above_target"] = zones_above_target
+                metadata["zones_above_target_note"] = "These zones exceed the target max customers (not enforced)"
+            if zones_below_min:
+                metadata["zones_below_minimum"] = zones_below_min
+                metadata["zones_below_minimum_note"] = f"These zones are below the minimum guideline of {min_customers_per_zone} customers"
 
         return ZoningResult(assignments, metadata=metadata)

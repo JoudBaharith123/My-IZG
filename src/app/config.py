@@ -3,12 +3,20 @@
 from pathlib import Path
 from typing import Any, Literal, Optional
 
+import json
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     """Runtime configuration loaded from environment variables or defaults."""
+    
+    model_config = SettingsConfigDict(
+        env_prefix="IZG_",
+        case_sensitive=False,
+        env_file=".env",
+        env_file_encoding="utf-8",
+    )
 
     app_name: str = "Intelligent Zone Generator API"
     api_prefix: str = "/api"
@@ -65,16 +73,65 @@ class Settings(BaseSettings):
         description="Supabase service role key for backend operations.",
     )
 
-    model_config = {
-        "env_prefix": "IZG_",
-        "case_sensitive": False,
-    }
 
     @field_validator("data_root", "customer_file", "dc_locations_file", mode="before")
     @classmethod
     def _expand_path(cls, value: Any) -> Path:
         path_value = value if isinstance(value, Path) else Path(str(value))
         return path_value.expanduser().resolve()
+    
+    @field_validator("frontend_allowed_origins", "working_days", mode="before")
+    @classmethod
+    def _parse_str_tuple_from_env(cls, value: Any) -> tuple[str, ...]:
+        """Parse string tuple from environment variable (comma-separated or JSON array)."""
+        if isinstance(value, tuple):
+            return value
+        if isinstance(value, list):
+            return tuple(str(item) for item in value)
+        if isinstance(value, str):
+            # Try JSON first
+            try:
+                parsed = json.loads(value)
+                if isinstance(parsed, list):
+                    return tuple(str(item) for item in parsed)
+            except (json.JSONDecodeError, TypeError):
+                pass
+            # Try comma-separated
+            if "," in value:
+                return tuple(item.strip() for item in value.split(",") if item.strip())
+            # Single value
+            if value.strip():
+                return (value.strip(),)
+        # Return empty tuple if value is None or empty
+        return tuple()
+    
+    @field_validator("default_isochrones", mode="before")
+    @classmethod
+    def _parse_int_tuple_from_env(cls, value: Any) -> tuple[int, ...]:
+        """Parse integer tuple from environment variable (comma-separated or JSON array)."""
+        if isinstance(value, tuple):
+            return value
+        if isinstance(value, list):
+            return tuple(int(item) for item in value)
+        if isinstance(value, str):
+            # Try JSON first
+            try:
+                parsed = json.loads(value)
+                if isinstance(parsed, list):
+                    return tuple(int(item) for item in parsed)
+            except (json.JSONDecodeError, TypeError, ValueError):
+                pass
+            # Try comma-separated
+            if "," in value:
+                return tuple(int(item.strip()) for item in value.split(",") if item.strip())
+            # Single value
+            if value.strip():
+                try:
+                    return (int(value.strip()),)
+                except ValueError:
+                    return tuple()
+        # Return empty tuple if value is None or empty
+        return tuple()
 
 
 settings = Settings()

@@ -9,6 +9,7 @@ from shapely.ops import unary_union
 
 from ...data.customers_repository import get_customers_for_location, resolve_depot
 from ...persistence.filesystem import FileStorage
+from ...persistence.database import save_zones_to_database
 from ..balancing.service import balance_assignments
 from ..outputs.formatter import zoning_response_to_csv, zoning_response_to_json
 from ..export.geojson import export_zones_to_easyterritory, save_easyterritory_json
@@ -82,6 +83,10 @@ def process_zoning_request(payload: ZoningRequest, *, persist: bool = True) -> Z
     metadata.setdefault("city", payload.city)
     metadata.setdefault("method", payload.method)
     metadata.setdefault("balance_enabled", payload.balance)
+    if payload.target_zones:
+        metadata["target_zones"] = payload.target_zones
+    if payload.max_customers_per_zone:
+        metadata["max_customers_per_zone"] = payload.max_customers_per_zone
     if payload.run_label:
         metadata["run_label"] = payload.run_label
     if payload.requested_by:
@@ -117,6 +122,19 @@ def process_zoning_request(payload: ZoningRequest, *, persist: bool = True) -> Z
     )
 
     if persist:
+        # Save to database first
+        try:
+            save_zones_to_database(
+                zones_response=response.model_dump(),
+                city=payload.city,
+                method=payload.method,
+            )
+        except Exception as exc:
+            # Log error but don't fail the entire request
+            import logging
+            logging.warning(f"Failed to save zones to database: {exc}")
+        
+        # Also save to files (backup)
         storage = FileStorage()
         run_dir = storage.make_run_directory(prefix=f"zones_{payload.method}")
         customers = list(customers)  # ensure we have a concrete sequence for serialization

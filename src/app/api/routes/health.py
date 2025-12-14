@@ -45,3 +45,44 @@ def sync_depots() -> dict:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to sync depots: {str(exc)}"
         ) from exc
+
+
+@router.get("/health/database", status_code=status.HTTP_200_OK)
+def check_database() -> dict:
+    """Check database connection and zone storage status."""
+    from ...db.supabase import get_supabase_client
+    from ...persistence.database import get_zones_from_database
+    
+    supabase = get_supabase_client()
+    if not supabase:
+        return {
+            "configured": False,
+            "message": "Supabase not configured. Set IZG_SUPABASE_URL and IZG_SUPABASE_KEY environment variables.",
+            "zones_count": 0,
+        }
+    
+    try:
+        # Try to get zones from database
+        zones = get_zones_from_database()
+        
+        # Try to check if zones table exists
+        try:
+            test_query = supabase.table("zones").select("id", count="exact").limit(1).execute()
+            table_exists = True
+        except Exception:
+            table_exists = False
+        
+        return {
+            "configured": True,
+            "connected": True,
+            "zones_table_exists": table_exists,
+            "zones_count": len(zones),
+            "message": f"Database connected. Found {len(zones)} zones in database." if table_exists else "Database connected but zones table may not exist.",
+        }
+    except Exception as exc:
+        return {
+            "configured": True,
+            "connected": False,
+            "error": str(exc),
+            "message": f"Database connection error: {exc}",
+        }
