@@ -19,9 +19,22 @@ from .dispatcher import get_strategy
 
 
 def _ensure_customers(city: str) -> Sequence[Customer]:
-    customers = get_customers_for_location(city)
+    import logging
+    
+    try:
+        customers = get_customers_for_location(city)
+    except ConnectionError as conn_err:
+        # Re-raise connection errors with clear message
+        raise ConnectionError(
+            f"Cannot generate zones: {str(conn_err)}. "
+            f"Please ensure you have a stable internet connection and your database is accessible."
+        ) from conn_err
+    
     if not customers:
-        raise ValueError(f"No customers found for city '{city}'.")
+        raise ValueError(
+            f"No customers found for city '{city}'. "
+            f"Please make sure you have uploaded customer data for this city."
+        )
     return customers
 
 

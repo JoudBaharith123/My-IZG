@@ -353,6 +353,280 @@ def update_zone_geometry(zone_id: str, coordinates: list[tuple[float, float]]) -
         return False
 
 
+def unassign_customer_from_zone(customer_id: str, zone_id: str) -> bool:
+    """Unassign a customer from a zone.
+    
+    Removes the customer_id from the zone's metadata customer_ids list.
+    Updates customer_count accordingly.
+    
+    Args:
+        customer_id: Customer ID to unassign
+        zone_id: Zone ID to remove customer from
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    supabase = get_supabase_client()
+    if not supabase:
+        import logging
+        logging.warning("Database not configured - cannot unassign customer from zone")
+        return False
+    
+    try:
+        # Find the zone in the database
+        response = supabase.table("zones").select("*").eq("name", zone_id).order("created_at", desc=True).limit(1).execute()
+        
+        if not response.data or len(response.data) == 0:
+            import logging
+            logging.warning(f"Zone '{zone_id}' not found in database")
+            return False
+        
+        zone = response.data[0]
+        zone_db_id = zone["id"]
+        metadata = zone.get("metadata", {})
+        
+        if not isinstance(metadata, dict):
+            metadata = {}
+        
+        # Get current customer_ids list
+        customer_ids = metadata.get("customer_ids", [])
+        if not isinstance(customer_ids, list):
+            customer_ids = []
+        
+        # Remove customer_id if present
+        if customer_id in customer_ids:
+            customer_ids.remove(customer_id)
+            metadata["customer_ids"] = customer_ids
+            
+            # Update customer_count
+            new_count = len(customer_ids)
+            
+            # Update zone in database
+            supabase.table("zones").update({
+                "metadata": metadata,
+                "customer_count": new_count,
+            }).eq("id", zone_db_id).execute()
+            
+            import logging
+            logging.info(f"Unassigned customer '{customer_id}' from zone '{zone_id}'. New customer_count: {new_count}")
+            return True
+        else:
+            import logging
+            logging.warning(f"Customer '{customer_id}' not found in zone '{zone_id}' customer_ids")
+            return False
+        
+    except Exception as e:
+        import logging
+        logging.error(f"Failed to unassign customer '{customer_id}' from zone '{zone_id}': {e}")
+        return False
+
+
+def assign_customer_to_zone(customer_id: str, zone_id: str) -> bool:
+    """Assign/transfer a customer to a zone.
+    
+    Adds the customer_id to the zone's metadata customer_ids list.
+    Updates customer_count accordingly.
+    
+    Args:
+        customer_id: Customer ID to assign
+        zone_id: Zone ID to assign customer to
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    supabase = get_supabase_client()
+    if not supabase:
+        import logging
+        logging.warning("Database not configured - cannot assign customer to zone")
+        return False
+    
+    try:
+        # First, remove customer from any other zone they might be assigned to
+        # Find all zones that contain this customer
+        all_zones_response = supabase.table("zones").select("id, name, metadata").execute()
+        
+        if all_zones_response.data:
+            for zone in all_zones_response.data:
+                zone_meta = zone.get("metadata", {})
+                if isinstance(zone_meta, dict):
+                    zone_customer_ids = zone_meta.get("customer_ids", [])
+                    if isinstance(zone_customer_ids, list) and customer_id in zone_customer_ids:
+                        # Remove from this zone
+                        zone_customer_ids.remove(customer_id)
+                        zone_meta["customer_ids"] = zone_customer_ids
+                        old_count = zone.get("customer_count", 0)
+                        new_count = max(0, old_count - 1)
+                        
+                        supabase.table("zones").update({
+                            "metadata": zone_meta,
+                            "customer_count": new_count,
+                        }).eq("id", zone["id"]).execute()
+        
+        # Now add customer to the target zone
+        response = supabase.table("zones").select("*").eq("name", zone_id).order("created_at", desc=True).limit(1).execute()
+        
+        if not response.data or len(response.data) == 0:
+            import logging
+            logging.warning(f"Zone '{zone_id}' not found in database")
+            return False
+        
+        zone = response.data[0]
+        zone_db_id = zone["id"]
+        metadata = zone.get("metadata", {})
+        
+        if not isinstance(metadata, dict):
+            metadata = {}
+        
+        # Get current customer_ids list
+        customer_ids = metadata.get("customer_ids", [])
+        if not isinstance(customer_ids, list):
+            customer_ids = []
+        
+        # Add customer_id if not already present
+        if customer_id not in customer_ids:
+            customer_ids.append(customer_id)
+            metadata["customer_ids"] = customer_ids
+            
+            # Update customer_count
+            new_count = len(customer_ids)
+            
+            # Update zone in database
+            supabase.table("zones").update({
+                "metadata": metadata,
+                "customer_count": new_count,
+            }).eq("id", zone_db_id).execute()
+            
+            import logging
+            logging.info(f"Assigned customer '{customer_id}' to zone '{zone_id}'. New customer_count: {new_count}")
+            return True
+        else:
+            import logging
+            logging.info(f"Customer '{customer_id}' already assigned to zone '{zone_id}'")
+            return True  # Already assigned, consider it success
+        
+    except Exception as e:
+        import logging
+        logging.error(f"Failed to assign customer '{customer_id}' to zone '{zone_id}': {e}")
+        return False
+
+
+def get_unassigned_customers(city: str | None = None) -> list[str]:
+    """Get list of customer IDs that are not assigned to any zone.
+    
+    Args:
+        city: Optional city filter
+        
+    Returns:
+        List of unassigned customer IDs
+    """
+    supabase = get_supabase_client()
+    if not supabase:
+        return []
+    
+    try:
+        # Get all zones and collect all assigned customer IDs
+        query = supabase.table("zones").select("metadata")
+        if city:
+            query = query.contains("metadata", {"city": city})
+        
+        response = query.execute()
+        assigned_customer_ids = set()
+        
+        if response.data:
+            for zone in response.data:
+                metadata = zone.get("metadata", {})
+                if isinstance(metadata, dict):
+                    customer_ids = metadata.get("customer_ids", [])
+                    if isinstance(customer_ids, list):
+                        assigned_customer_ids.update(customer_ids)
+        
+        # Get all customers from database for the city (if specified)
+        customer_query = supabase.table("customers").select("customer_id")
+        if city:
+            customer_query = customer_query.eq("city", city)
+        
+        customer_response = customer_query.execute()
+        all_customer_ids = set()
+        if customer_response.data:
+            for record in customer_response.data:
+                customer_id = record.get("customer_id")
+                if customer_id:
+                    all_customer_ids.add(str(customer_id))
+        
+        # Filter to get unassigned customers
+        unassigned_ids = list(all_customer_ids - assigned_customer_ids)
+        return unassigned_ids
+        
+    except Exception as e:
+        import logging
+        logging.error(f"Failed to get unassigned customers: {e}")
+        return []
+
+
+def get_customers_from_zones(zone_ids: list[str]) -> list[str]:
+    """Get all customer IDs from specified zones before deletion.
+    
+    Args:
+        zone_ids: List of zone IDs to get customers from
+        
+    Returns:
+        List of customer IDs that were in these zones
+    """
+    supabase = get_supabase_client()
+    if not supabase or not zone_ids:
+        return []
+    
+    try:
+        customer_ids = set()
+        response = supabase.table("zones").select("metadata").in_("name", zone_ids).execute()
+        
+        if response.data:
+            for zone in response.data:
+                metadata = zone.get("metadata", {})
+                if isinstance(metadata, dict):
+                    zone_customer_ids = metadata.get("customer_ids", [])
+                    if isinstance(zone_customer_ids, list):
+                        customer_ids.update(zone_customer_ids)
+        
+        return list(customer_ids)
+    except Exception as e:
+        import logging
+        logging.warning(f"Failed to get customers from zones {zone_ids}: {e}")
+        return []
+
+
+def delete_zones(zone_ids: list[str]) -> bool:
+    """Delete zones from the database by their zone IDs.
+    
+    Args:
+        zone_ids: List of zone IDs (zone names) to delete
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    supabase = get_supabase_client()
+    if not supabase:
+        import logging
+        logging.warning("Database not configured - cannot delete zones")
+        return False
+    
+    if not zone_ids:
+        return True  # Nothing to delete
+    
+    try:
+        # Delete zones by name (zone_id)
+        response = supabase.table("zones").delete().in_("name", zone_ids).execute()
+        
+        import logging
+        logging.info(f"Deleted {len(zone_ids)} zones from database: {zone_ids}")
+        return True
+        
+    except Exception as e:
+        import logging
+        logging.error(f"Failed to delete zones {zone_ids} from database: {e}")
+        return False
+
+
 def get_customers_for_zone(zone_id: str) -> tuple[Customer, ...]:
     """Get customers assigned to a zone from the database.
     

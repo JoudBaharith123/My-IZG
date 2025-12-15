@@ -1,5 +1,6 @@
 """Supabase client for Python backend."""
 
+import logging
 from functools import lru_cache
 from supabase import create_client, Client
 from ..config import settings
@@ -7,10 +8,22 @@ from ..config import settings
 
 @lru_cache()
 def get_supabase_client() -> Client | None:
-    """Get cached Supabase client instance."""
+    """Get cached Supabase client instance.
+    
+    Returns:
+        Supabase Client instance if configured, None otherwise.
+        Note: This does not test the connection - actual queries may fail with network errors.
+    """
     if not settings.supabase_url or not settings.supabase_key:
+        logging.warning("Supabase credentials not configured (missing URL or key)")
         return None
-    return create_client(settings.supabase_url, settings.supabase_key)
+    
+    try:
+        client = create_client(settings.supabase_url, settings.supabase_key)
+        return client
+    except Exception as e:
+        logging.error(f"Failed to create Supabase client: {e}")
+        return None
 
 
 # Convenience alias

@@ -45,12 +45,22 @@ export type GenerateZonesPayload = {
   polygons?: ManualPolygonPayload[]
   balance?: boolean
   balance_tolerance?: number
+  delete_existing_zones?: string[]  // Zone IDs to delete before generating
 }
 
 export function useGenerateZones() {
   return useMutation<GenerateZonesResponse, AxiosError, GenerateZonesPayload>({
     mutationFn: async (payload) => {
-      const { data } = await apiClient.post<GenerateZonesResponse>('/zones/generate', payload)
+      const { delete_existing_zones, ...requestPayload } = payload
+      const params: Record<string, string | string[]> = {}
+      if (delete_existing_zones && delete_existing_zones.length > 0) {
+        // FastAPI expects multiple query params with the same name for lists
+        // axios will handle this automatically when we pass an array
+        params.delete_existing_zones = delete_existing_zones
+      }
+      const { data } = await apiClient.post<GenerateZonesResponse>('/zones/generate', requestPayload, {
+        params,
+      })
       return data
     },
   })

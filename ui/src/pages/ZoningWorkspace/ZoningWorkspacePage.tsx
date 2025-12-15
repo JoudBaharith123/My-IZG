@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState, useRef } from 'react'
 import type { ReactNode } from 'react'
 import { AlertTriangle, Download, Edit3, Pencil, Plus, RefreshCw, Target, Trash2 } from 'lucide-react'
 import { InteractiveMap, type MapPolygon } from '../../components/InteractiveMap'
@@ -20,6 +20,11 @@ import {
 } from '../../hooks/useGenerateZones'
 import { useZonesFromDatabase } from '../../hooks/useZonesFromDatabase'
 import { useUpdateZoneGeometry } from '../../hooks/useUpdateZoneGeometry'
+import { useUnassignCustomer } from '../../hooks/useUnassignCustomer'
+import { useAssignCustomer } from '../../hooks/useAssignCustomer'
+import { useUnassignedCustomers } from '../../hooks/useUnassignedCustomers'
+import { useDatabaseZoneSummaries } from '../../hooks/useDatabaseZoneSummaries'
+import { useDeleteZones } from '../../hooks/useDeleteZones'
 
 type Method = 'polar' | 'isochrone' | 'clustering' | 'manual'
 
@@ -73,9 +78,17 @@ export function ZoningWorkspacePage() {
   const [activeFilters, setActiveFilters] = useState<Record<string, string>>({})
   const [selectedZone, setSelectedZone] = useState<string>('')  // Filter by generated zone
   const [editMode, setEditMode] = useState(false)  // Enable editing for all zones
+  const [selectedUnassignedCustomer, setSelectedUnassignedCustomer] = useState<string>('')  // Selected customer from unassigned pool
+  const [selectedZoneCustomer, setSelectedZoneCustomer] = useState<string>('')  // Selected customer from zone dropdown
+  const [showTransferModal, setShowTransferModal] = useState(false)  // Show transfer modal
+  const [customerToTransfer, setCustomerToTransfer] = useState<string>('')  // Customer ID to transfer
+  const [selectedZonesForAction, setSelectedZonesForAction] = useState<Set<string>>(new Set())  // Zones selected for delete/regenerate
 
   const { mutateAsync: generateZones, isPending, isError } = useGenerateZones()
-  const { mutateAsync: updateZoneGeometry, isPending: isUpdatingGeometry } = useUpdateZoneGeometry()
+  const { mutateAsync: updateZoneGeometry } = useUpdateZoneGeometry()
+  const { mutateAsync: unassignCustomer, isPending: isUnassigning } = useUnassignCustomer()
+  const { mutateAsync: assignCustomer, isPending: isAssigning } = useAssignCustomer()
+  const { mutateAsync: deleteZones, isPending: isDeletingZones } = useDeleteZones()
   const { data: cityCatalog } = useCustomerCities()
   
   // Fetch zones from database when city changes and no result exists
@@ -83,6 +96,10 @@ export function ZoningWorkspacePage() {
     city && city !== ALL_CITIES_VALUE ? city : undefined,
     undefined // Don't filter by method - show all zones for the city
   )
+  
+  // Get unassigned customers and zone summaries for transfer
+  const { data: unassignedCustomers } = useUnassignedCustomers(city && city !== ALL_CITIES_VALUE ? city : undefined)
+  const { data: zoneSummariesForTransfer } = useDatabaseZoneSummaries(city && city !== ALL_CITIES_VALUE ? city : undefined)
   const cityOptions = useMemo(() => {
     const cities: string[] = []
     // Add "All Cities" as first option
@@ -130,8 +147,9 @@ export function ZoningWorkspacePage() {
     // Prefer result from generation, otherwise use zones from database
     const effective = result || dbZones
     if (dbZones && !result) {
+      const metadata = dbZones.metadata as { map_overlays?: { polygons?: Array<unknown> } } | undefined
       console.log('🗺️ Using zones from database:', {
-        polygonCount: dbZones.metadata?.map_overlays?.polygons?.length ?? 0,
+        polygonCount: metadata?.map_overlays?.polygons?.length ?? 0,
         city: dbZones.city,
         method: dbZones.method,
       })
@@ -364,6 +382,11 @@ export function ZoningWorkspacePage() {
       balance_tolerance: Number((balanceTolerance / 100).toFixed(3)),
     }
 
+    // If zones are selected for regeneration, delete them first
+    if (selectedZonesForAction.size > 0) {
+      payload.delete_existing_zones = Array.from(selectedZonesForAction)
+    }
+
     if (method !== 'manual') {
       payload.target_zones = targetZones
     }
@@ -407,6 +430,7 @@ export function ZoningWorkspacePage() {
     }
   }, [
     applyBalancing,
+    selectedZonesForAction,
     balanceTolerance,
     city,
     generateZones,
@@ -495,19 +519,23 @@ export function ZoningWorkspacePage() {
           </section>
 
           {/* Zone Filter - Shows Generated Zones (including manual) */}
-          <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-800 dark:bg-background-dark/60">
-            <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
-              Zone (Generated)
-            </label>
-            <select
-              value={selectedZone}
-              onChange={(e) => setSelectedZone(e.target.value)}
+          <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-800 dark:bg-background-dark/60 space-y-4">
+            <div>
+              <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                Zone (Generated)
+              </label>
+              <select
+                value={selectedZone}
+                onChange={(e) => {
+                  setSelectedZone(e.target.value)
+                  setSelectedZoneCustomer('') // Clear selected customer when zone changes
+                }}
                 disabled={
-                (method === 'manual' && manualPolygons.filter(p => p.coordinates).length === 0) ||
-                (method !== 'manual' && (!effectiveResult || !effectiveResult.counts || !Array.isArray(effectiveResult.counts) || effectiveResult.counts.length === 0))
-              }
-              className="w-full rounded-lg border border-gray-300 bg-background-light px-3 py-2 text-sm text-gray-900 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/40 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
+                  (method === 'manual' && manualPolygons.filter(p => p.coordinates).length === 0) ||
+                  (method !== 'manual' && (!effectiveResult || !effectiveResult.counts || !Array.isArray(effectiveResult.counts) || effectiveResult.counts.length === 0))
+                }
+                className="w-full rounded-lg border border-gray-300 bg-background-light px-3 py-2 text-sm text-gray-900 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/40 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
               {method === 'manual' ? (
                 <>
                   <option value="">All Zones</option>
@@ -546,6 +574,211 @@ export function ZoningWorkspacePage() {
                 <option value="">No zones generated yet</option>
               )}
             </select>
+            </div>
+
+            {/* Zone Selection for Delete/Regenerate */}
+            {effectiveResult && effectiveResult.counts && Array.isArray(effectiveResult.counts) && effectiveResult.counts.length > 0 && (
+              <div className="space-y-2 border-t border-gray-200 pt-4 dark:border-gray-700">
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                  Select Zones for Actions
+                </label>
+                <div className="max-h-48 space-y-2 overflow-y-auto">
+                  {effectiveResult.counts
+                    .sort((a, b) => a.zone_id.localeCompare(b.zone_id))
+                    .map((zoneCount) => {
+                      const isSelected = selectedZonesForAction.has(zoneCount.zone_id)
+                      return (
+                        <label
+                          key={zoneCount.zone_id}
+                          className="flex items-center gap-2 rounded-lg border border-gray-200 p-2 hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-800/60 cursor-pointer"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={(e) => {
+                              const newSelected = new Set(selectedZonesForAction)
+                              if (e.target.checked) {
+                                newSelected.add(zoneCount.zone_id)
+                              } else {
+                                newSelected.delete(zoneCount.zone_id)
+                              }
+                              setSelectedZonesForAction(newSelected)
+                            }}
+                            className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
+                          />
+                          <span className="flex-1 text-sm text-gray-900 dark:text-white">
+                            {zoneCount.zone_id} ({zoneCount.customer_count} customers)
+                          </span>
+                        </label>
+                      )
+                    })}
+                </div>
+                <div className="flex gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      if (selectedZonesForAction.size === 0) {
+                        setLastError('Please select at least one zone to delete')
+                        return
+                      }
+                      if (!confirm(`Are you sure you want to delete ${selectedZonesForAction.size} zone(s)? This action cannot be undone.`)) {
+                        return
+                      }
+                      try {
+                        await deleteZones({ zone_ids: Array.from(selectedZonesForAction) })
+                        setSelectedZonesForAction(new Set())
+                        setSelectedZone('')
+                        console.log(`✅ Deleted ${selectedZonesForAction.size} zone(s)`)
+                      } catch (error) {
+                        console.error(`❌ Failed to delete zones:`, error)
+                        setLastError(`Failed to delete zones. Please try again.`)
+                      }
+                    }}
+                    disabled={selectedZonesForAction.size === 0 || isDeletingZones}
+                    className="flex-1 rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {isDeletingZones ? 'Deleting...' : `Delete (${selectedZonesForAction.size})`}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (selectedZonesForAction.size === 0) {
+                        setLastError('Please select at least one zone to regenerate')
+                        return
+                      }
+                      // Set the target zones to match selected zones count for regeneration
+                      const targetZonesCount = selectedZonesForAction.size
+                      setTargetZones(targetZonesCount)
+                      // Show info message
+                      setLastError(null)
+                      // Note: The actual regeneration will happen when user clicks "Run" button
+                      // The selected zones will be deleted and new ones created
+                    }}
+                    disabled={selectedZonesForAction.size === 0}
+                    className="flex-1 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Prepare Regenerate ({selectedZonesForAction.size})
+                  </button>
+                </div>
+                {selectedZonesForAction.size > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setSelectedZonesForAction(new Set())}
+                    className="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-semibold text-gray-700 transition hover:bg-gray-100 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-800"
+                  >
+                    Clear Selection
+                  </button>
+                )}
+              </div>
+            )}
+
+            {/* Zone Customers Dropdown - Show customers in selected zone */}
+            {selectedZone && (
+              <div className="space-y-2">
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                  Customers in Zone
+                </label>
+                {(() => {
+                  const assignments = effectiveResult?.assignments ?? {}
+                  const zoneCustomers = customerPoints.filter((customer) => {
+                    const assignedZone = assignments[customer.customer_id] ?? customer.zone ?? 'Unassigned'
+                    return assignedZone === selectedZone
+                  })
+
+                  if (zoneCustomers.length === 0) {
+                    return <p className="text-sm text-gray-500 dark:text-gray-400">No customers in this zone</p>
+                  }
+
+                  return (
+                    <div className="space-y-2">
+                      <SearchableCustomerDropdown
+                        customers={zoneCustomers}
+                        value={selectedZoneCustomer}
+                        onChange={setSelectedZoneCustomer}
+                        placeholder="Search customers in zone..."
+                      />
+                      
+                      {selectedZoneCustomer && zoneCustomers.some(c => c.customer_id === selectedZoneCustomer) && (
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              try {
+                                await unassignCustomer({
+                                  zone_id: selectedZone,
+                                  customer_id: selectedZoneCustomer,
+                                })
+                                setSelectedZoneCustomer('')
+                                console.log(`✅ Customer ${selectedZoneCustomer} unassigned from zone ${selectedZone}`)
+                              } catch (error) {
+                                console.error(`❌ Failed to unassign customer:`, error)
+                                setLastError(`Failed to unassign customer. Please try again.`)
+                              }
+                            }}
+                            disabled={isUnassigning}
+                            className="flex-1 rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            Unassign
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCustomerToTransfer(selectedZoneCustomer)
+                              setShowTransferModal(true)
+                            }}
+                            disabled={isAssigning}
+                            className="flex-1 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            Transfer
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )
+                })()}
+              </div>
+            )}
+          </section>
+
+          {/* Unassigned Pool */}
+          <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-800 dark:bg-background-dark/60">
+            <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+              Unassigned Pool ({unassignedCustomers?.count || 0})
+            </label>
+            <p className="mb-2 text-xs text-gray-500 dark:text-gray-400">
+              Unassigned customers will be automatically assigned when zones are created that include their location. You can also manually assign them to a zone below.
+            </p>
+            {unassignedCustomers?.customer_ids && unassignedCustomers.customer_ids.length > 0 ? (
+              <>
+                <SearchableCustomerDropdown
+                  customers={unassignedCustomers.customer_ids.map((customerId) => {
+                    const customer = customerPoints.find(c => c.customer_id === customerId)
+                    return {
+                      customer_id: customerId,
+                      customer_name: customer?.customer_name || null,
+                    }
+                  })}
+                  value={selectedUnassignedCustomer}
+                  onChange={setSelectedUnassignedCustomer}
+                  placeholder="Search unassigned customers..."
+                />
+                {selectedUnassignedCustomer && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCustomerToTransfer(selectedUnassignedCustomer)
+                      setShowTransferModal(true)
+                    }}
+                    className="mt-2 w-full rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+                    disabled={!selectedUnassignedCustomer || isAssigning}
+                  >
+                    Assign to Zone
+                  </button>
+                )}
+              </>
+            ) : (
+              <p className="text-sm text-gray-500 dark:text-gray-400">No unassigned customers</p>
+            )}
           </section>
 
           <FilterPanel
@@ -715,7 +948,11 @@ export function ZoningWorkspacePage() {
               className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-white shadow transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-70"
             >
               <Target className="h-4 w-4" />
-              {isPending ? 'Running…' : 'Generate zones'}
+              {isPending 
+                ? 'Running…' 
+                : selectedZonesForAction.size > 0 
+                  ? `Regenerate ${selectedZonesForAction.size} Zone(s)`
+                  : 'Generate zones'}
             </button>
             <button
               type="button"
@@ -1024,6 +1261,78 @@ export function ZoningWorkspacePage() {
           ) : null}
         </section>
       </div>
+
+      {/* Transfer Customer Modal */}
+      {showTransferModal && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50">
+          <div className="relative w-full max-w-md rounded-2xl bg-white p-6 shadow-xl dark:bg-gray-800">
+            <h3 className="mb-4 text-lg font-semibold text-gray-900 dark:text-white">
+              Assign Customer to Zone
+            </h3>
+            <p className="mb-4 text-sm text-gray-600 dark:text-gray-300">
+              Customer: <strong>{customerToTransfer}</strong>
+            </p>
+            <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+              Select Zone
+            </label>
+            <select
+              id="transferZoneSelect"
+              className="mb-4 w-full rounded-lg border border-gray-300 bg-background-light px-3 py-2 text-sm text-gray-900 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/40 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
+            >
+              <option value="">Select a zone...</option>
+              {zoneSummariesForTransfer?.map((zone) => (
+                <option key={zone.zone} value={zone.zone}>
+                  {zone.zone} ({zone.customers} customers)
+                </option>
+              ))}
+            </select>
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={async () => {
+                  const selectElement = document.getElementById('transferZoneSelect') as HTMLSelectElement
+                  const targetZoneId = selectElement?.value
+                  
+                  if (!targetZoneId) {
+                    setLastError('Please select a zone')
+                    return
+                  }
+                  
+                  try {
+                    await assignCustomer({
+                      zone_id: targetZoneId,
+                      customer_id: customerToTransfer,
+                    })
+                    setShowTransferModal(false)
+                    setCustomerToTransfer('')
+                    setSelectedUnassignedCustomer('')
+                    setSelectedZoneCustomer('')
+                    console.log(`✅ Customer ${customerToTransfer} assigned to zone ${targetZoneId}`)
+                  } catch (error) {
+                    console.error(`❌ Failed to transfer customer:`, error)
+                    setLastError(`Failed to transfer customer to zone. Please try again.`)
+                  }
+                }}
+                disabled={isAssigning}
+                className="flex-1 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {isAssigning ? 'Transferring...' : 'Transfer'}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowTransferModal(false)
+                  setCustomerToTransfer('')
+                }}
+                disabled={isAssigning}
+                className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 transition hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-800"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -1337,6 +1646,138 @@ function createPolygonId() {
   return 'poly-' + Math.random().toString(36).slice(2, 8)
 }
 
+// Searchable dropdown component for customer selection
+function SearchableCustomerDropdown({
+  customers,
+  value,
+  onChange,
+  placeholder = 'Select a customer...',
+}: {
+  customers: Array<{ customer_id: string; customer_name?: string | null }>
+  value: string
+  onChange: (customerId: string) => void
+  placeholder?: string
+}) {
+  const [searchTerm, setSearchTerm] = useState('')
+  const [isOpen, setIsOpen] = useState(false)
+  const inputRef = useRef<HTMLInputElement>(null)
+  const dropdownRef = useRef<HTMLDivElement>(null)
+
+  // Filter customers based on search term
+  const filteredCustomers = useMemo(() => {
+    if (!searchTerm.trim()) {
+      return customers
+    }
+    const lowerSearch = searchTerm.toLowerCase()
+    return customers.filter((customer) => {
+      const name = (customer.customer_name || '').toLowerCase()
+      const id = customer.customer_id.toLowerCase()
+      return name.includes(lowerSearch) || id.includes(lowerSearch)
+    })
+  }, [customers, searchTerm])
+
+  // Get display name for selected customer
+  const selectedCustomer = customers.find((c) => c.customer_id === value)
+  const displayValue = selectedCustomer
+    ? selectedCustomer.customer_name
+      ? `${selectedCustomer.customer_name} (${selectedCustomer.customer_id})`
+      : selectedCustomer.customer_id
+    : ''
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (
+        dropdownRef.current &&
+        !dropdownRef.current.contains(event.target as Node) &&
+        inputRef.current &&
+        !inputRef.current.contains(event.target as Node)
+      ) {
+        setIsOpen(false)
+      }
+    }
+
+    if (isOpen) {
+      document.addEventListener('mousedown', handleClickOutside)
+      return () => document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [isOpen])
+
+  const handleSelect = (customerId: string) => {
+    onChange(customerId)
+    setSearchTerm('')
+    setIsOpen(false)
+  }
+
+  return (
+    <div className="relative">
+      <div className="relative">
+        <input
+          ref={inputRef}
+          type="text"
+          value={isOpen ? searchTerm : displayValue}
+          onChange={(e) => {
+            setSearchTerm(e.target.value)
+            setIsOpen(true)
+          }}
+          onFocus={() => {
+            setSearchTerm('')
+            setIsOpen(true)
+          }}
+          placeholder={placeholder}
+          className="w-full rounded-lg border border-gray-300 bg-background-light px-3 py-2 pr-8 text-sm text-gray-900 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/40 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
+        />
+        {!isOpen && displayValue && (
+          <button
+            type="button"
+            onClick={() => {
+              onChange('')
+              setSearchTerm('')
+            }}
+            className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+            aria-label="Clear selection"
+          >
+            ×
+          </button>
+        )}
+      </div>
+
+      {isOpen && (
+        <div
+          ref={dropdownRef}
+          className="absolute z-50 mt-1 max-h-60 w-full overflow-auto rounded-lg border border-gray-300 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-800"
+        >
+          {filteredCustomers.length === 0 ? (
+            <div className="px-3 py-2 text-sm text-gray-500 dark:text-gray-400">No customers found</div>
+          ) : (
+            <ul className="py-1">
+              {filteredCustomers.map((customer) => {
+                const displayName = customer.customer_name
+                  ? `${customer.customer_name} (${customer.customer_id})`
+                  : customer.customer_id
+                const isSelected = customer.customer_id === value
+                return (
+                  <li
+                    key={customer.customer_id}
+                    onClick={() => handleSelect(customer.customer_id)}
+                    className={`cursor-pointer px-3 py-2 text-sm transition ${
+                      isSelected
+                        ? 'bg-primary text-white'
+                        : 'text-gray-900 hover:bg-gray-100 dark:text-gray-100 dark:hover:bg-gray-700'
+                    }`}
+                  >
+                    {displayName}
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function parseManualPolygons(forms: ManualPolygonForm[]): ManualPolygonPayload[] {
   const polygons: ManualPolygonPayload[] = []
   for (const form of forms) {
@@ -1380,7 +1821,7 @@ function formatPercent(value: number) {
   return sign + value.toFixed(1) + '%'
 }
 
-function downloadJson(data: GenerateZonesResponse, filename: string) {
+function downloadJson(data: unknown, filename: string) {
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
   triggerDownload(blob, filename)
 }
@@ -1419,7 +1860,7 @@ function buildGeoJSON(
   city: string,
   method: string
 ): unknown[] {
-  return polygons.map((polygon, index) => {
+  return polygons.map((polygon) => {
     const zoneId = polygon.id.replace('-polygon', '')
     const coordinates = polygon.positions.map((pos) => `${pos[1]} ${pos[0]}`).join(',')
     const wkt = `POLYGON((${coordinates}))`
