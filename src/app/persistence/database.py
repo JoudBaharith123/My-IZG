@@ -6,6 +6,7 @@ from typing import Any
 
 from ..db.supabase import get_supabase_client
 from ..data.customers_repository import resolve_depot
+from ..models.domain import Customer
 from ..services.export.geojson import polygon_to_wkt
 import re
 
@@ -67,6 +68,16 @@ def save_zones_to_database(
                     "source": polygon.get("source", "unknown"),
                     "coordinates": coordinates,  # Store coordinates in metadata as backup
                 }
+                
+                # Store assignments for this zone (customer_id -> zone_id mapping)
+                assignments = zones_response.get("assignments", {})
+                zone_assignments = {
+                    customer_id: assigned_zone
+                    for customer_id, assigned_zone in assignments.items()
+                    if assigned_zone == zone_id
+                }
+                if zone_assignments:
+                    metadata["customer_ids"] = list(zone_assignments.keys())
                 
                 # Add any additional metadata from the response
                 response_metadata = zones_response.get("metadata", {})
@@ -276,4 +287,118 @@ def get_zones_from_database(city: str | None = None, method: str | None = None) 
         import logging
         logging.warning(f"Failed to retrieve zones from database: {e}")
         return []
+
+
+
+
+def update_zone_geometry(zone_id: str, coordinates: list[tuple[float, float]]) -> bool:
+    """Update zone geometry in the database.
+    
+    Args:
+        zone_id: Zone name/ID to update
+        coordinates: List of [lat, lon] coordinate pairs for the new polygon
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    supabase = get_supabase_client()
+    if not supabase:
+        import logging
+        logging.warning("Database not configured - cannot update zone geometry")
+        return False
+    
+    if not coordinates or len(coordinates) < 3:
+        import logging
+        logging.warning(f"Invalid coordinates for zone '{zone_id}': need at least 3 points")
+        return False
+    
+    try:
+        # Convert coordinates to WKT format
+        geometry_wkt = polygon_to_wkt(coordinates)
+        
+        # Update the zone's geometry
+        # First, try to find the zone (get the most recent one if multiple exist)
+        response = supabase.table("zones").select("id").eq("name", zone_id).order("created_at", desc=True).limit(1).execute()
+        
+        if not response.data or len(response.data) == 0:
+            import logging
+            logging.warning(f"Zone '{zone_id}' not found in database")
+            return False
+        
+        zone_db_id = response.data[0]["id"]
+        
+        # Update geometry using geometry_wkt (will be converted by trigger)
+        update_response = supabase.table("zones").update({
+            "geometry_wkt": geometry_wkt,
+        }).eq("id", zone_db_id).execute()
+        
+        # Also update metadata coordinates as backup
+        zone_data = supabase.table("zones").select("metadata").eq("id", zone_db_id).execute()
+        if zone_data.data:
+            metadata = zone_data.data[0].get("metadata", {})
+            if isinstance(metadata, dict):
+                metadata["coordinates"] = coordinates
+                metadata["geometry_updated"] = True
+                supabase.table("zones").update({
+                    "metadata": metadata
+                }).eq("id", zone_db_id).execute()
+        
+        import logging
+        logging.info(f"Successfully updated geometry for zone '{zone_id}'")
+        return True
+        
+    except Exception as e:
+        import logging
+        logging.error(f"Failed to update zone geometry for '{zone_id}': {e}")
+        return False
+
+
+def get_customers_for_zone(zone_id: str) -> tuple[Customer, ...]:
+    """Get customers assigned to a zone from the database.
+    
+    This function looks up the zone in the database, retrieves the customer_ids
+    stored in the zone's metadata, and then loads those customers from the database.
+    
+    Args:
+        zone_id: The zone ID to get customers for
+        
+    Returns:
+        Tuple of Customer objects assigned to the zone
+    """
+    supabase = get_supabase_client()
+    if not supabase:
+        import logging
+        logging.warning("Database not configured - cannot fetch customers for zone")
+        return tuple()
+    
+    try:
+        # Find the zone in the database
+        response = supabase.table("zones").select("*").eq("name", zone_id).order("created_at", desc=True).limit(1).execute()
+        
+        if not response.data or len(response.data) == 0:
+            import logging
+            logging.warning(f"Zone '{zone_id}' not found in database")
+            return tuple()
+        
+        zone = response.data[0]
+        metadata = zone.get("metadata", {})
+        
+        # Get customer IDs from metadata
+        customer_ids = None
+        if isinstance(metadata, dict):
+            customer_ids = metadata.get("customer_ids")
+        
+        if not customer_ids or not isinstance(customer_ids, list):
+            import logging
+            logging.warning(f"Zone '{zone_id}' has no customer_ids stored in metadata")
+            return tuple()
+        
+        # Load customers from database by IDs
+        from ..data.customers_repository import get_customers_by_ids
+        return get_customers_by_ids(customer_ids)
+        
+    except Exception as e:
+        import logging
+        logging.warning(f"Failed to retrieve customers for zone {zone_id} from database: {e}")
+        return tuple()
 

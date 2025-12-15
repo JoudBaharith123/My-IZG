@@ -107,7 +107,7 @@ def process_zoning_request(payload: ZoningRequest, *, persist: bool = True) -> Z
     if payload.method == "manual" and payload.polygons:
         map_polygons = _manual_polygon_overlays(payload.polygons)
     else:
-        map_polygons = _convex_hull_overlays(result.assignments, customers)
+        map_polygons = _convex_hull_overlays(result.assignments, customers, payload.city)
 
     if map_polygons:
         metadata.setdefault("map_overlays", {})
@@ -181,29 +181,124 @@ def _manual_polygon_overlays(polygons: Sequence) -> list[dict]:
     return overlays
 
 
-def _convex_hull_overlays(assignments: dict[str, str], customers: Sequence[Customer]) -> list[dict]:
-    """Generate zone polygons from customer points, ensuring NO overlaps."""
+def _get_city_boundary_polygon(city: str) -> Polygon | None:
+    """Get city boundary as a rectangular polygon for clipping zones.
+    
+    Args:
+        city: City name
+        
+    Returns:
+        Polygon representing city boundary, or None if city not found
+    """
+    # Geographic bounding boxes for each city (lat_min, lat_max, lon_min, lon_max)
+    CITY_BOUNDARIES = {
+        "jeddah": (21.2, 21.8, 39.0, 39.5),
+        "جدة": (21.2, 21.8, 39.0, 39.5),
+        "جده": (21.2, 21.8, 39.0, 39.5),
+        "riyadh": (24.3, 24.9, 46.4, 47.0),
+        "الرياض": (24.3, 24.9, 46.4, 47.0),
+        "makkah": (21.3, 21.6, 39.7, 40.0),
+        "مكة": (21.3, 21.6, 39.7, 40.0),
+        "مكة المكرمة": (21.3, 21.6, 39.7, 40.0),
+        "madinah": (24.3, 24.7, 39.4, 39.8),
+        "madina": (24.3, 24.7, 39.4, 39.8),
+        "المدينة": (24.3, 24.7, 39.4, 39.8),
+        "المدينة المنورة": (24.3, 24.7, 39.4, 39.8),
+        "dammam": (26.2, 26.6, 49.9, 50.3),
+        "الدمام": (26.2, 26.6, 49.9, 50.3),
+        "taif": (21.1, 21.5, 40.2, 40.7),
+        "الطائف": (21.1, 21.5, 40.2, 40.7),
+    }
+    
+    normalized = city.strip().lower()
+    bounds = CITY_BOUNDARIES.get(normalized)
+    
+    if not bounds:
+        return None
+    
+    lat_min, lat_max, lon_min, lon_max = bounds
+    # Create rectangular polygon: (lon, lat) pairs
+    return Polygon([
+        (lon_min, lat_min),  # Southwest
+        (lon_max, lat_min),  # Southeast
+        (lon_max, lat_max),  # Northeast
+        (lon_min, lat_max),  # Northwest
+        (lon_min, lat_min),  # Close polygon
+    ])
+
+
+def _convex_hull_overlays(assignments: dict[str, str], customers: Sequence[Customer], city: str) -> list[dict]:
+    """Generate zone polygons from customer points.
+    
+    Key requirements:
+    1. All customers must be INSIDE the zone boundary (not on the edge)
+    2. Zones must not cross city boundaries
+    3. Zones should not overlap with each other
+    
+    Args:
+        assignments: Customer ID to zone ID mapping
+        customers: List of customer objects
+        city: City name for boundary enforcement
+    """
     customer_lookup = {customer.customer_id: customer for customer in customers}
-    zone_points: dict[str, set[tuple[float, float]]] = {}
+    zone_points: dict[str, list[tuple[float, float]]] = {}  # Use list to preserve order
     zone_customer_count: dict[str, int] = {}
+    
+    # Get city boundary for clipping
+    city_boundary = _get_city_boundary_polygon(city)
     
     # Collect points and count customers for each zone
     for customer_id, zone_id in assignments.items():
         customer = customer_lookup.get(customer_id)
         if not customer:
             continue
-        zone_points.setdefault(zone_id, set()).add((customer.longitude, customer.latitude))
+        if zone_id not in zone_points:
+            zone_points[zone_id] = []
+        # Store as (lon, lat) for Shapely
+        zone_points[zone_id].append((customer.longitude, customer.latitude))
         zone_customer_count[zone_id] = zone_customer_count.get(zone_id, 0) + 1
 
-    # First pass: Create initial convex hulls with centers
+    # First pass: Create initial convex hulls, then buffer outward so customers are INSIDE
     zone_polygons: dict[str, tuple[Polygon, Point]] = {}
     for zone_id, points in zone_points.items():
         if len(points) < 3:
             continue
-        hull = MultiPoint(list(points)).convex_hull
+        
+        # Create convex hull from customer points
+        hull = MultiPoint(points).convex_hull
         if hull.is_empty or hull.geom_type != "Polygon":
             continue
-        zone_polygons[zone_id] = (hull, hull.centroid)
+        
+        # Buffer the convex hull OUTWARD so all customers are INSIDE the boundary
+        # Buffer distance: ~0.005 degrees ≈ 500-600 meters (safe margin)
+        # This ensures customers are well inside, not on the edge
+        buffered_hull = hull.buffer(0.005)  # ~500-600m buffer
+        
+        # If buffered result is not a Polygon, use the original hull with smaller buffer
+        if buffered_hull.is_empty or buffered_hull.geom_type != "Polygon":
+            buffered_hull = hull.buffer(0.002)  # Fallback: ~200-250m buffer
+            if buffered_hull.is_empty or buffered_hull.geom_type != "Polygon":
+                buffered_hull = hull  # Last resort: use original
+        
+        # Clip to city boundary if available (ensures zones don't cross city boundaries)
+        if city_boundary and buffered_hull.intersects(city_boundary):
+            # Intersect with city boundary to clip any parts outside the city
+            clipped = buffered_hull.intersection(city_boundary)
+            
+            # Handle result type
+            if clipped.is_empty:
+                # If completely outside, use a small buffer around the customer points
+                buffered_hull = hull.buffer(0.003)
+                clipped = buffered_hull.intersection(city_boundary) if city_boundary else buffered_hull
+            
+            if clipped.geom_type == "MultiPolygon":
+                # Take the largest polygon part
+                clipped = max(clipped.geoms, key=lambda p: p.area if p.area > 0 else 0)
+            
+            if clipped.geom_type == "Polygon" and not clipped.is_empty:
+                buffered_hull = clipped
+        
+        zone_polygons[zone_id] = (buffered_hull, buffered_hull.centroid)
     
     # Check for overlaps and clip if necessary
     zone_ids = list(zone_polygons.keys())
@@ -243,11 +338,30 @@ def _convex_hull_overlays(assignments: dict[str, str], customers: Sequence[Custo
         
         clipped_polygons[zone_id] = final_polygon
     
-    # Build final overlays with customer counts
+    # Final validation: Ensure all customers are INSIDE their zone polygons
     overlays: list[dict] = []
     for zone_id, polygon in clipped_polygons.items():
         if polygon.is_empty or polygon.geom_type != "Polygon":
             continue
+        
+        # Verify all customers for this zone are inside the polygon
+        zone_customer_points = [Point(lon, lat) for lon, lat in zone_points[zone_id]]
+        customers_inside = all(polygon.contains(p) for p in zone_customer_points)
+        
+        # If any customer is outside, expand the polygon slightly
+        if not customers_inside:
+            try:
+                expanded = polygon.buffer(0.001)  # Expand slightly (~100m)
+                if not expanded.is_empty and expanded.geom_type == "Polygon":
+                    # Clip to city boundary again if needed
+                    if city_boundary:
+                        expanded = expanded.intersection(city_boundary)
+                        if expanded.geom_type == "MultiPolygon":
+                            expanded = max(expanded.geoms, key=lambda p: p.area if p.area > 0 else 0)
+                    if expanded.geom_type == "Polygon" and not expanded.is_empty:
+                        polygon = expanded
+            except Exception:
+                pass  # Keep original if expansion fails
         
         lat_lon_sequence = [[lat, lon] for lon, lat in polygon.exterior.coords]
         centroid = polygon.centroid
@@ -258,8 +372,8 @@ def _convex_hull_overlays(assignments: dict[str, str], customers: Sequence[Custo
                 "zone_id": zone_id,
                 "coordinates": lat_lon_sequence,
                 "centroid": [centroid.y, centroid.x],
-                "source": "convex_hull",
-                "customer_count": customer_count,  # Add customer count for tooltip
+                "source": "convex_hull_buffered",
+                "customer_count": customer_count,
             }
         )
     return overlays

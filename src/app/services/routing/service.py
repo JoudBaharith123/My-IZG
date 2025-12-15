@@ -48,22 +48,48 @@ def _build_constraints(payload: RoutingRequest) -> SolverConstraints:
 
 
 def optimize_routes(payload: RoutingRequest) -> RoutingResponse:
+    import logging
+    
     depot = resolve_depot(payload.city)
     if not depot:
         raise ValueError(f"Depot not found for city '{payload.city}'.")
 
-    customers = get_customers_for_location(payload.zone_id)
+    # Try to get customers from database zone assignments first
+    # Falls back to CSV zone matching if zone not in database
+    try:
+        from ...persistence.database import get_customers_for_zone
+        customers = get_customers_for_zone(payload.zone_id)
+        logging.info(f"Retrieved {len(customers)} customers for zone '{payload.zone_id}' from database")
+    except Exception as e:
+        logging.error(f"Failed to retrieve customers for zone '{payload.zone_id}': {e}")
+        raise ValueError(f"Failed to retrieve customers for zone '{payload.zone_id}': {str(e)}") from e
+    
     if not customers:
-        raise ValueError(f"No customers found for zone '{payload.zone_id}'.")
+        raise ValueError(f"No customers found for zone '{payload.zone_id}'. Make sure the zone has customers assigned in the database.")
 
     filtered_customers = _filter_customers(customers, payload.customer_ids)
     if not filtered_customers:
         raise ValueError("Customer list after filtering is empty.")
 
     coordinates = [(customer.latitude, customer.longitude) for customer in filtered_customers]
-    osrm_client = OSRMClient()
+    
+    # Initialize OSRM client with error handling
+    try:
+        osrm_client = OSRMClient()
+    except ValueError as e:
+        import logging
+        logging.error(f"OSRM client initialization failed: {e}")
+        raise ValueError(f"OSRM service is not configured. Please check OSRM_BASE_URL setting.") from e
+    
     coordinate_list = build_coordinate_list(depot.latitude, depot.longitude, coordinates)
-    osrm_table = osrm_client.table(coordinate_list)
+    
+    # Get distance/duration matrix from OSRM
+    try:
+        osrm_table = osrm_client.table(coordinate_list)
+    except Exception as e:
+        import logging
+        logging.error(f"OSRM table request failed: {e}")
+        raise ValueError(f"Failed to get routing data from OSRM service: {str(e)}. Please ensure OSRM is running and accessible.") from e
 
     constraints = _build_constraints(payload)
     routing_result = solve_vrp(

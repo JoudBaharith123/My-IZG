@@ -213,20 +213,21 @@ function DrawControl({
     }
   }, [map, onPolygonCreated, onPolygonEdited, onPolygonDeleted])
 
-  // Manage draw controls based on drawing mode
+  // Manage draw controls based on drawing mode and edit mode
   useEffect(() => {
     if (!map || !featureGroupRef.current) return
 
     const hasDrawingPolygon = drawnPolygons.some((p) => p.isDrawing)
-    console.log('🔍 Drawing mode check:', hasDrawingPolygon)
+    const hasEditablePolygons = drawnPolygons.some((p) => p.isEditing || (!p.isDrawing && drawnPolygons.length > 0))
+    console.log('🔍 Drawing mode check:', hasDrawingPolygon, 'Edit mode check:', hasEditablePolygons)
 
-    // Add controls if needed and not already added
-    if (hasDrawingPolygon && !drawControlRef.current) {
-      console.log('✅ Adding draw controls to map')
+    // Add controls if needed (for drawing OR editing)
+    if ((hasDrawingPolygon || hasEditablePolygons) && !drawControlRef.current) {
+      console.log('✅ Adding draw/edit controls to map')
       const drawControl = new L.Control.Draw({
         position: 'topright',
         draw: {
-          polygon: {
+          polygon: hasDrawingPolygon ? {
             allowIntersection: false,
             showArea: false,  // Disabled to prevent "type is not defined" error
             repeatMode: false,
@@ -239,7 +240,7 @@ function DrawControl({
               fillColor: '#3b82f6',
               fillOpacity: 0.15,
             },
-          },
+          } : false,  // Disable drawing when just editing
           polyline: false,
           rectangle: false,
           circle: false,
@@ -248,27 +249,45 @@ function DrawControl({
         },
         edit: {
           featureGroup: featureGroupRef.current,
-          remove: false,
+          remove: false,  // Don't allow deletion through edit toolbar
         },
       })
 
       drawControl.addTo(map)
       drawControlRef.current = drawControl
 
-      // Hide the toolbar but automatically activate drawing
+      // Handle toolbar visibility and auto-activation
       setTimeout(() => {
-        // Hide the toolbar
-        const toolbar = document.querySelector('.leaflet-draw-toolbar')
-        if (toolbar instanceof HTMLElement) {
-          toolbar.style.display = 'none'
-          console.log('🙈 Draw toolbar hidden')
-        }
+        if (hasDrawingPolygon) {
+          // Hide the toolbar and auto-start drawing
+          const toolbar = document.querySelector('.leaflet-draw-toolbar')
+          if (toolbar instanceof HTMLElement) {
+            toolbar.style.display = 'none'
+            console.log('🙈 Draw toolbar hidden')
+          }
 
-        // Automatically click the polygon button to start drawing
-        const polygonButton = document.querySelector('.leaflet-draw-draw-polygon') as HTMLElement
-        if (polygonButton) {
-          polygonButton.click()
-          console.log('🎨 Auto-activated polygon drawing mode')
+          // Automatically click the polygon button to start drawing
+          const polygonButton = document.querySelector('.leaflet-draw-draw-polygon') as HTMLElement
+          if (polygonButton) {
+            polygonButton.click()
+            console.log('🎨 Auto-activated polygon drawing mode')
+          }
+        } else if (hasEditablePolygons) {
+          // Show the toolbar so users can click the edit button
+          const toolbar = document.querySelector('.leaflet-draw-toolbar')
+          if (toolbar instanceof HTMLElement) {
+            toolbar.style.display = 'block'
+            console.log('✏️ Edit toolbar visible - click edit button to edit polygons')
+          }
+          
+          // Auto-click the edit button to enable editing immediately
+          setTimeout(() => {
+            const editButton = document.querySelector('.leaflet-draw-edit-edit') as HTMLElement
+            if (editButton) {
+              editButton.click()
+              console.log('✅ Auto-activated edit mode - polygons are now editable')
+            }
+          }, 100)
         }
       }, 50)
 
@@ -304,11 +323,16 @@ function DrawControl({
         }
       }, 100)
     }
-    // Remove controls if no longer needed
-    else if (!hasDrawingPolygon && drawControlRef.current) {
+    // Remove controls if no longer needed (neither drawing nor editing)
+    else if (!hasDrawingPolygon && !hasEditablePolygons && drawControlRef.current) {
       console.log('❌ Removing draw controls from map')
       map.removeControl(drawControlRef.current)
       drawControlRef.current = null
+    }
+    // Update controls if we're switching to edit mode (polygons exist but not drawing)
+    else if (!hasDrawingPolygon && hasEditablePolygons && drawControlRef.current) {
+      // Controls already exist, just ensure edit mode is active
+      console.log('✏️ Edit mode active - polygons should be editable via toolbar')
     }
   }, [map, drawnPolygons])
 
@@ -338,26 +362,8 @@ function DrawControl({
       // Store polygon ID on the layer for reference
       ;(layer as any)._polygonId = polygon.id
 
-      // Make the layer editable if isEditing is true
-      if (polygon.isEditing) {
-        layer.editing?.enable()
-
-        // Listen for edit events on this specific polygon
-        layer.on('edit', () => {
-          const latLngs = layer.getLatLngs()[0] as L.LatLng[]
-          const coordinates: Array<[number, number]> = latLngs.map((latLng) => [latLng.lat, latLng.lng])
-          const polygonId = (layer as any)._polygonId
-
-          console.log('🔄 Polygon vertex moved:', polygonId)
-
-          if (onPolygonEdited) {
-            onPolygonEdited(polygonId, coordinates)
-          }
-        })
-      } else {
-        // Disable editing if isEditing is false
-        layer.editing?.disable()
-      }
+      // Add to feature group first (required for editing)
+      featureGroupRef.current?.addLayer(layer)
 
       // Add tooltip with zone name and customer count - show on hover only
       if (polygon.customerCount !== undefined || polygon.zoneId) {
@@ -371,7 +377,8 @@ function DrawControl({
         })
       }
 
-      featureGroupRef.current?.addLayer(layer)
+      // Note: Edit events are handled globally via L.Draw.Event.EDITED listener above
+      // This ensures edits are captured when user finishes editing via the toolbar
     })
   }, [drawnPolygons, onPolygonEdited])
 

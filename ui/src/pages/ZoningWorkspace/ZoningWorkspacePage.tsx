@@ -19,6 +19,7 @@ import {
   type ManualPolygonPayload,
 } from '../../hooks/useGenerateZones'
 import { useZonesFromDatabase } from '../../hooks/useZonesFromDatabase'
+import { useUpdateZoneGeometry } from '../../hooks/useUpdateZoneGeometry'
 
 type Method = 'polar' | 'isochrone' | 'clustering' | 'manual'
 
@@ -71,8 +72,10 @@ export function ZoningWorkspacePage() {
   const [runMeta, setRunMeta] = useState<{ durationSeconds: number; timestamp: string } | null>(null)
   const [activeFilters, setActiveFilters] = useState<Record<string, string>>({})
   const [selectedZone, setSelectedZone] = useState<string>('')  // Filter by generated zone
+  const [editMode, setEditMode] = useState(false)  // Enable editing for all zones
 
   const { mutateAsync: generateZones, isPending, isError } = useGenerateZones()
+  const { mutateAsync: updateZoneGeometry, isPending: isUpdatingGeometry } = useUpdateZoneGeometry()
   const { data: cityCatalog } = useCustomerCities()
   
   // Fetch zones from database when city changes and no result exists
@@ -437,12 +440,26 @@ export function ZoningWorkspacePage() {
             Configure parameters and generate zone assignments using the Intelligent Zone Generator backend.
           </p>
         </div>
-        <button
-          type="button"
-          className="inline-flex items-center gap-2 rounded-full border border-gray-200 px-4 py-2 text-sm font-semibold text-gray-700 transition hover:bg-gray-100 dark:border-gray-700 dark:text-gray-100 dark:hover:bg-gray-800"
-        >
-          <RefreshCw className="h-4 w-4" /> Refresh OSRM Status
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setEditMode(!editMode)}
+            className={`inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-semibold transition ${
+              editMode
+                ? 'border-primary bg-primary text-white hover:bg-primary/90'
+                : 'border-gray-200 text-gray-700 hover:bg-gray-100 dark:border-gray-700 dark:text-gray-100 dark:hover:bg-gray-800'
+            }`}
+            disabled={!polygonOverlays.length}
+          >
+            <Pencil className="h-4 w-4" /> {editMode ? 'Exit Edit Mode' : 'Edit Zones'}
+          </button>
+          <button
+            type="button"
+            className="inline-flex items-center gap-2 rounded-full border border-gray-200 px-4 py-2 text-sm font-semibold text-gray-700 transition hover:bg-gray-100 dark:border-gray-700 dark:text-gray-100 dark:hover:bg-gray-800"
+          >
+            <RefreshCw className="h-4 w-4" /> Refresh OSRM Status
+          </button>
+        </div>
       </header>
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,360px)_minmax(0,1fr)]">
@@ -924,6 +941,49 @@ export function ZoningWorkspacePage() {
                 }
               }}
               caption={`${city} - Draw polygons to define zones`}
+              className="h-[calc(100vh-12rem)]"
+            />
+          ) : editMode ? (
+            <DrawableMap
+              center={mapViewport.center}
+              zoom={mapViewport.zoom}
+              caption={`${mapCaption} - Edit Mode: Click and drag polygon vertices to edit zones`}
+              markers={zoneMarkers}
+              drawnPolygons={polygonOverlays.map((polygon) => {
+                // Extract zone_id from polygon id (format: "zone_id-polygon")
+                const zoneId = polygon.id.replace('-polygon', '')
+                return {
+                  id: polygon.id,
+                  zoneId: zoneId,
+                  coordinates: polygon.positions.map((pos) => [pos[0], pos[1]] as [number, number]),
+                  color: polygon.color,
+                  customerCount: parseInt(polygon.tooltip?.match(/\((\d+) customers\)/)?.[1] || '0'),
+                  isEditing: true,  // Enable editing for all polygons in edit mode
+                }
+              })}
+              onPolygonEdited={async (polygonId, coordinates) => {
+                // Extract zone_id from polygon id
+                const zoneId = polygonId.replace('-polygon', '')
+                
+                try {
+                  await updateZoneGeometry({
+                    zone_id: zoneId,
+                    coordinates: coordinates as Array<[number, number]>,
+                  })
+                  console.log(`✅ Zone ${zoneId} geometry updated successfully`)
+                } catch (error) {
+                  console.error(`❌ Failed to update zone ${zoneId}:`, error)
+                  setLastError(`Failed to update zone ${zoneId}. Please try again.`)
+                }
+              }}
+              onPolygonCreated={() => {
+                // Don't allow creating new polygons in edit mode
+                setLastError('Edit mode: Use zone generation to create new zones')
+              }}
+              onPolygonDeleted={() => {
+                // Don't allow deleting polygons in edit mode (will be separate feature)
+                setLastError('Use the delete zone feature to remove zones')
+              }}
               className="h-[calc(100vh-12rem)]"
             />
           ) : (

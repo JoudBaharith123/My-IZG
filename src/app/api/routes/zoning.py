@@ -6,7 +6,7 @@ from typing import Any, List
 
 from fastapi import APIRouter, HTTPException, Query, status
 
-from ...persistence.database import get_zones_from_database, wkt_to_coordinates, geojson_to_coordinates
+from ...persistence.database import get_zones_from_database, wkt_to_coordinates, geojson_to_coordinates, update_zone_geometry
 from ...schemas.zoning import ZoningRequest, ZoningResponse
 from ...schemas.customers import ZoneSummaryModel
 from ...services.zoning.service import process_zoning_request
@@ -160,6 +160,69 @@ def get_zones(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to retrieve zones from database: {str(exc)}"
+        ) from exc
+
+
+@router.put("/{zone_id}/geometry", status_code=status.HTTP_200_OK)
+def update_zone_geometry_endpoint(
+    zone_id: str,
+    coordinates: list[list[float]],
+) -> dict[str, Any]:
+    """Update zone geometry (polygon outline).
+    
+    Args:
+        zone_id: Zone ID to update
+        coordinates: List of [lat, lon] coordinate pairs for the new polygon outline
+    """
+    try:
+        # Validate coordinates
+        if not coordinates or len(coordinates) < 3:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="At least 3 coordinate points are required for a polygon"
+            )
+        
+        # Convert to tuple format
+        coord_tuples = []
+        for coord in coordinates:
+            if len(coord) < 2:
+                continue
+            try:
+                lat = float(coord[0])
+                lon = float(coord[1])
+                coord_tuples.append((lat, lon))
+            except (ValueError, TypeError):
+                continue
+        
+        if len(coord_tuples) < 3:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid coordinates provided"
+            )
+        
+        # Update zone geometry
+        success = update_zone_geometry(zone_id, coord_tuples)
+        
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to update zone geometry for '{zone_id}'"
+            )
+        
+        return {
+            "success": True,
+            "zone_id": zone_id,
+            "message": f"Zone '{zone_id}' geometry updated successfully"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as exc:
+        import logging
+        logging.exception(f"Error updating zone geometry: {exc}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update zone geometry: {str(exc)}"
         ) from exc
 
 

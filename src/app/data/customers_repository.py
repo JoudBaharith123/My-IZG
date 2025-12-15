@@ -141,7 +141,184 @@ def iter_customers_for_location(location: str, source: Optional[Path] = None) ->
 
 
 def get_customers_for_location(location: str, source: Optional[Path] = None) -> tuple[Customer, ...]:
-    return tuple(iter_customers_for_location(location, source))
+    """Get customers for a location (city or zone) from the database.
+    
+    Args:
+        location: City name or zone ID
+        source: Optional path to customer CSV file (deprecated - kept for compatibility)
+        
+    Returns:
+        Tuple of Customer objects
+    """
+    # Try database first
+    from ..db.supabase import get_supabase_client
+    supabase = get_supabase_client()
+    
+    if supabase:
+        try:
+            # Get city name variations for matching
+            normalized = location.strip().lower()
+            CITY_TRANSLATIONS = {
+                "جدة": ["جدة", "jeddah", "جده", "جدّة"],
+                "jeddah": ["جدة", "jeddah", "جده", "جدّة"],
+                "الرياض": ["الرياض", "riyadh", "رياض"],
+                "riyadh": ["الرياض", "riyadh", "رياض"],
+                "مكة": ["مكة", "مكة المكرمة", "makkah", "mecca"],
+                "مكة المكرمة": ["مكة", "مكة المكرمة", "makkah", "mecca"],
+                "makkah": ["مكة", "مكة المكرمة", "makkah", "mecca"],
+                "المدينة": ["المدينة", "المدينة المنورة", "madinah", "madina"],
+                "المدينة المنورة": ["المدينة", "المدينة المنورة", "madinah", "madina"],
+                "madinah": ["المدينة", "المدينة المنورة", "madinah", "madina"],
+                "madina": ["المدينة", "المدينة المنورة", "madinah", "madina"],
+                "الدمام": ["الدمام", "dammam", "دمام"],
+                "dammam": ["الدمام", "dammam", "دمام"],
+                "الطائف": ["الطائف", "taif"],
+                "taif": ["الطائف", "taif"],
+            }
+            
+            # Get all accepted variants for this city
+            accepted_variants = CITY_TRANSLATIONS.get(normalized, [normalized, location])
+            accepted_variants_set = set(v.lower() for v in accepted_variants)
+            accepted_variants_set.add(normalized)  # Also try exact match
+            
+            # Try querying by city with variations
+            all_customers = []
+            seen_customer_ids = set()
+            
+            # Query for each variant (case-insensitive matching by querying all variants)
+            for variant in accepted_variants_set:
+                try:
+                    # Query by exact match (case-sensitive in DB, but we'll filter)
+                    city_response = supabase.table("customers").select("*").eq("city", variant).execute()
+                    
+                    if city_response.data:
+                        for record in city_response.data:
+                            customer_id = record.get("customer_id")
+                            if customer_id and customer_id not in seen_customer_ids:
+                                try:
+                                    customer = _db_record_to_customer(record)
+                                    # Double-check the city matches (case-insensitive)
+                                    if customer.city and customer.city.lower() in accepted_variants_set:
+                                        all_customers.append(customer)
+                                        seen_customer_ids.add(customer_id)
+                                except (ValueError, KeyError, TypeError):
+                                    continue
+                except Exception:
+                    continue
+            
+            # Also try the original location string (not normalized)
+            if location not in accepted_variants_set:
+                try:
+                    city_response = supabase.table("customers").select("*").eq("city", location).execute()
+                    if city_response.data:
+                        for record in city_response.data:
+                            customer_id = record.get("customer_id")
+                            if customer_id and customer_id not in seen_customer_ids:
+                                try:
+                                    customer = _db_record_to_customer(record)
+                                    if customer.city:
+                                        all_customers.append(customer)
+                                        seen_customer_ids.add(customer_id)
+                                except (ValueError, KeyError, TypeError):
+                                    continue
+                except Exception:
+                    pass
+            
+            if all_customers:
+                return tuple(all_customers)
+            
+            # Try querying by zone (exact match)
+            zone_response = supabase.table("customers").select("*").eq("zone", location).execute()
+            
+            if zone_response.data and len(zone_response.data) > 0:
+                customers = []
+                for record in zone_response.data:
+                    try:
+                        customer = _db_record_to_customer(record)
+                        customers.append(customer)
+                    except (ValueError, KeyError, TypeError):
+                        continue
+                if customers:
+                    return tuple(customers)
+        except Exception as e:
+            import logging
+            logging.warning(f"Failed to retrieve customers from database for location '{location}': {e}")
+    
+    # If database not configured or no results, return empty (no CSV fallback)
+    return tuple()
+
+
+def _db_record_to_customer(record: dict) -> Customer:
+    """Convert a database record to a Customer object.
+    
+    Args:
+        record: Database record from Supabase
+        
+    Returns:
+        Customer object
+    """
+    raw_data = record.get("raw_data", {})
+    if not isinstance(raw_data, dict):
+        raw_data = {}
+    
+    return Customer(
+        customer_id=record.get("customer_id", ""),
+        customer_name=record.get("customer_name", ""),
+        latitude=float(record.get("latitude", 0)),
+        longitude=float(record.get("longitude", 0)),
+        city=record.get("city"),
+        zone=record.get("zone"),
+        agent_id=record.get("agent_id"),
+        agent_name=record.get("agent_name"),
+        status=record.get("status"),
+        area=record.get("area"),
+        region=record.get("region"),
+        raw=raw_data,
+    )
+
+
+def get_customers_by_ids(customer_ids: list[str], source: Optional[Path] = None) -> tuple[Customer, ...]:
+    """Get customers by their customer_id values from the database.
+    
+    Args:
+        customer_ids: List of customer IDs to retrieve
+        source: Optional path to customer CSV file (deprecated - kept for compatibility)
+        
+    Returns:
+        Tuple of Customer objects matching the provided IDs
+    """
+    if not customer_ids:
+        return tuple()
+    
+    # Query database
+    from ..db.supabase import get_supabase_client
+    supabase = get_supabase_client()
+    
+    if not supabase:
+        return tuple()
+    
+    try:
+        response = supabase.table("customers").select("*").in_("customer_id", customer_ids).execute()
+        
+        if not response.data:
+            return tuple()
+        
+        customers = []
+        for record in response.data:
+            try:
+                customer = _db_record_to_customer(record)
+                customers.append(customer)
+            except (ValueError, KeyError, TypeError) as e:
+                import logging
+                logging.warning(f"Failed to convert customer record to Customer object: {e}")
+                continue
+        
+        return tuple(customers)
+        
+    except Exception as e:
+        import logging
+        logging.warning(f"Failed to retrieve customers by IDs from database: {e}")
+        return tuple()
 
 
 @functools.lru_cache(maxsize=1)

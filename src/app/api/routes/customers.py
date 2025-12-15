@@ -269,8 +269,84 @@ async def upload_customer_dataset(
         except Exception:
             pass  # Don't fail upload if metadata storage fails
 
+    # Parse and save customers to database
+    from ...data.customers_repository import _coerce_float
+    from ...models.domain import Customer
+    from ...persistence.customers import save_customers_to_database, clear_all_customers_from_database
+    
+    customers_to_save = []
+    for row in rows:
+        # Parse coordinates
+        lat = _coerce_float(row.get("Latitude") or row.get("latitude"))
+        lon = _coerce_float(row.get("Longitude") or row.get("longitude"))
+        if lat is None or lon is None:
+            continue  # Skip records without coordinates
+        
+        # Parse customer_id (required)
+        customer_id = (row.get("CusId") or row.get("customer_id") or row.get("CustomerId") or "").strip()
+        if not customer_id:
+            continue  # Skip records without customer_id
+        
+        # Parse customer_name (required)
+        customer_name = (row.get("CusName") or row.get("customer_name") or row.get("CustomerName") or "").strip()
+        if not customer_name:
+            customer_name = customer_id  # Use customer_id as fallback
+        
+        # Create Customer object
+        customer = Customer(
+            area=(row.get("Area") or row.get("area") or "").strip() or None,
+            region=(row.get("Region") or row.get("region") or "").strip() or None,
+            city=(row.get("City") or row.get("city") or row.get("Area") or row.get("area") or "").strip() or None,
+            zone=(row.get("Zone") or row.get("zone") or "").strip() or None,
+            agent_id=(row.get("AgentId") or row.get("agent_id") or "").strip() or None,
+            agent_name=(row.get("AgentName") or row.get("agent_name") or "").strip() or None,
+            customer_id=customer_id,
+            customer_name=customer_name,
+            latitude=lat,
+            longitude=lon,
+            status=(row.get("Status") or row.get("status") or "").strip() or None,
+            raw=row,
+        )
+        customers_to_save.append(customer)
+    
+    # Save customers to database
+    if customers_to_save:
+        # Clear existing customers first (optional - you might want to keep existing and just upsert)
+        # clear_all_customers_from_database()  # Uncomment if you want to replace all customers
+        
+        saved_count = save_customers_to_database(customers_to_save)
+        import logging
+        logging.info(f"Uploaded {len(customers_to_save)} customers, saved {saved_count} to database")
+
     stats = compute_customer_stats()
     return CustomerStatsResponse(**stats)
+
+
+@router.delete("/all", status_code=status.HTTP_200_OK)
+def delete_all_customers() -> dict:
+    """Delete all customers from the database.
+    
+    WARNING: This action cannot be undone!
+    """
+    from ...persistence.customers import clear_all_customers_from_database
+    
+    try:
+        success = clear_all_customers_from_database()
+        if success:
+            return {
+                "success": True,
+                "message": "All customers have been deleted from the database."
+            }
+        else:
+            return {
+                "success": False,
+                "message": "Failed to delete customers. Database may not be configured."
+            }
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete customers: {str(exc)}"
+        ) from exc
 
 
 @router.get("/filters")
