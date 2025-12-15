@@ -70,6 +70,15 @@ def get_zones(
             method_val = zone.get("method", "")
             metadata = zone.get("metadata", {})
             
+            # Extract customer_ids from metadata to build assignments
+            if isinstance(metadata, dict):
+                customer_ids = metadata.get("customer_ids", [])
+                if customer_ids and isinstance(customer_ids, list):
+                    # Build assignments: customer_id -> zone_id
+                    for customer_id in customer_ids:
+                        if customer_id:
+                            assignments[str(customer_id)] = zone_id
+            
             # Get coordinates from geometry (PostGIS returns as GeoJSON), geometry_wkt, or metadata
             coordinates: list[tuple[float, float]] = []
             
@@ -143,7 +152,7 @@ def get_zones(
         return {
             "city": result_city or "unknown",
             "method": result_method or "unknown",
-            "assignments": assignments,  # Empty - would need customer assignments to populate
+            "assignments": assignments,  # Now populated from zone metadata customer_ids
             "counts": counts,
             "metadata": {
                 "map_overlays": {

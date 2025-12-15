@@ -281,13 +281,35 @@ function DrawControl({
           }
           
           // Auto-click the edit button to enable editing immediately
-          setTimeout(() => {
+          // Try multiple times with increasing delays to ensure it works
+          const tryActivateEdit = (attempt = 0) => {
             const editButton = document.querySelector('.leaflet-draw-edit-edit') as HTMLElement
-            if (editButton) {
+            if (editButton && !editButton.classList.contains('active')) {
               editButton.click()
-              console.log('✅ Auto-activated edit mode - polygons are now editable')
+              console.log(`✅ Auto-activated edit mode (attempt ${attempt + 1}) - polygons should now be editable`)
+              // Verify edit mode was activated
+              setTimeout(() => {
+                if (editButton.classList.contains('active')) {
+                  console.log('✅ Edit mode confirmed active - vertices should be visible')
+                } else if (attempt < 3) {
+                  // Try again if not active yet
+                  tryActivateEdit(attempt + 1)
+                }
+              }, 200)
+            } else if (attempt < 5) {
+              // Retry if button not found yet or already active
+              setTimeout(() => tryActivateEdit(attempt + 1), 100 * (attempt + 1))
+            } else {
+              if (!editButton) {
+                console.warn('⚠️ Could not find edit button after multiple attempts')
+              } else {
+                console.log('✅ Edit button already active')
+              }
             }
-          }, 100)
+          }
+          
+          // Start trying to activate edit mode
+          setTimeout(() => tryActivateEdit(), 100)
         }
       }, 50)
 

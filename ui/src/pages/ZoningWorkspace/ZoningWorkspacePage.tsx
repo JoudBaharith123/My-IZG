@@ -277,14 +277,23 @@ export function ZoningWorkspacePage() {
       return []
     }
     const assignments = effectiveResult?.assignments ?? {}
+    
+    // Debug: Log assignments to help diagnose issues
+    if (selectedZone && Object.keys(assignments).length > 0) {
+      const assignedCustomers = Object.entries(assignments).filter(([_, zone]) => zone === selectedZone)
+      console.log(`Zone ${selectedZone} has ${assignedCustomers.length} customers in assignments`)
+    }
+    
     // Use smaller markers for large datasets
     const markerRadius = customerPoints.length > 2000 ? 3 : customerPoints.length > 1000 ? 4 : 6
 
     // Filter by selected zone if one is selected
     const filteredCustomers = selectedZone
       ? customerPoints.filter((customer) => {
+          // Check assignments first, then fall back to customer.zone
           const assignedZone = assignments[customer.customer_id] ?? customer.zone ?? 'Unassigned'
-          return assignedZone === selectedZone
+          const matches = assignedZone === selectedZone
+          return matches
         })
       : customerPoints
 
@@ -308,7 +317,7 @@ export function ZoningWorkspacePage() {
         tooltip: `${nameParts.join(' - ')} - ${assignedZone}`,
       }
     })
-  }, [customerPoints, result, zoneColorMap, selectedZone])
+  }, [customerPoints, effectiveResult, zoneColorMap, selectedZone])
 
   const polygonOverlays = useMemo<MapPolygon[]>(() => {
     if (!mapOverlayPolygons.length) {
