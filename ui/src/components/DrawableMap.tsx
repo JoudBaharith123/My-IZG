@@ -24,6 +24,30 @@ const customerCountStyles = `
     display: none !important;
   }
 
+  /* Enhanced customer tooltip styling */
+  .customer-tooltip {
+    background-color: rgba(255, 255, 255, 0.98) !important;
+    border: 2px solid #3b82f6 !important;
+    border-radius: 8px !important;
+    padding: 8px 12px !important;
+    font-size: 13px !important;
+    font-weight: 500 !important;
+    color: #1f2937 !important;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15) !important;
+    max-width: 250px !important;
+    white-space: pre-line !important;
+    line-height: 1.6 !important;
+    z-index: 1000 !important;
+  }
+  
+  .customer-tooltip .leaflet-tooltip-content {
+    margin: 0 !important;
+  }
+  
+  .customer-tooltip::before {
+    border-top-color: #3b82f6 !important;
+  }
+
   /* Ensure draw controls are visible and properly positioned */
   .leaflet-draw {
     z-index: 1000 !important;
@@ -80,6 +104,9 @@ export type MapMarker = {
   color?: string
   radius?: number
   tooltip?: string
+  customerName?: string
+  customerId?: string
+  zone?: string
 }
 
 export type DrawnPolygon = {
@@ -454,7 +481,24 @@ export function DrawableMap({
                   weight: 1,
                 }}
               >
-                {marker.tooltip ? <Tooltip>{marker.tooltip}</Tooltip> : null}
+                {marker.tooltip ? (
+                  <Tooltip 
+                    sticky 
+                    permanent={false}
+                    direction="top"
+                    offset={[0, -10]}
+                    className="customer-tooltip"
+                  >
+                    <div style={{ 
+                      whiteSpace: 'pre-line',
+                      textAlign: 'left',
+                      lineHeight: '1.5',
+                      fontWeight: '500'
+                    }}>
+                      {marker.tooltip}
+                    </div>
+                  </Tooltip>
+                ) : null}
               </CircleMarker>
             ))}
           </LayerGroup>

@@ -3,6 +3,41 @@ import { CircleMarker, LayerGroup, MapContainer, Polygon, Polyline, TileLayer, T
 import 'leaflet/dist/leaflet.css'
 import clsx from 'clsx'
 
+// Add custom CSS for customer tooltips
+const customerTooltipStyles = `
+  /* Enhanced customer tooltip styling */
+  .customer-tooltip {
+    background-color: rgba(255, 255, 255, 0.98) !important;
+    border: 2px solid #3b82f6 !important;
+    border-radius: 8px !important;
+    padding: 8px 12px !important;
+    font-size: 13px !important;
+    font-weight: 500 !important;
+    color: #1f2937 !important;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15) !important;
+    max-width: 250px !important;
+    white-space: pre-line !important;
+    line-height: 1.6 !important;
+    z-index: 1000 !important;
+  }
+  
+  .customer-tooltip .leaflet-tooltip-content {
+    margin: 0 !important;
+  }
+  
+  .customer-tooltip::before {
+    border-top-color: #3b82f6 !important;
+  }
+`
+
+// Inject styles once
+if (typeof document !== 'undefined' && !document.getElementById('customer-tooltip-styles')) {
+  const styleEl = document.createElement('style')
+  styleEl.id = 'customer-tooltip-styles'
+  styleEl.textContent = customerTooltipStyles
+  document.head.appendChild(styleEl)
+}
+
 export type MapMarker = {
   id: string
   position: LatLngExpression
@@ -101,7 +136,24 @@ export function InteractiveMap({
                   weight: 1,
                 }}
               >
-                {marker.tooltip ? <Tooltip>{marker.tooltip}</Tooltip> : null}
+                {marker.tooltip ? (
+                  <Tooltip 
+                    sticky 
+                    permanent={false}
+                    direction="top"
+                    offset={[0, -10]}
+                    className="customer-tooltip"
+                  >
+                    <div style={{ 
+                      whiteSpace: 'pre-line',
+                      textAlign: 'left',
+                      lineHeight: '1.5',
+                      fontWeight: '500'
+                    }}>
+                      {marker.tooltip}
+                    </div>
+                  </Tooltip>
+                ) : null}
               </CircleMarker>
             ))}
           </LayerGroup>

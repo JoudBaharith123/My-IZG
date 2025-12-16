@@ -16,6 +16,7 @@ from ...persistence.database import (
     get_unassigned_customers,
     delete_zones,
     get_customers_from_zones,
+    unassign_all_customers_from_zones,
 )
 from ...schemas.zoning import ZoningRequest, ZoningResponse
 from ...schemas.customers import ZoneSummaryModel
@@ -68,27 +69,39 @@ def generate_zones(
             logging.info(f"Preserving {len(existing_zone_ids_preserved)} existing zones: {list(existing_zone_ids_preserved)}")
             logging.info(f"Preserving assignments for {len(existing_assignments)} customers in existing zones")
             
-            # Delete ONLY the specified zones
-            logging.info(f"Deleting zones: {delete_existing_zones}")
-            delete_zones(delete_existing_zones)
+            # CRITICAL: Unassign all customers from zones BEFORE deleting them
+            # This ensures customers are properly unassigned and prevents orphaned assignments
+            logging.info(f"Unassigning all customers from zones before deletion: {delete_existing_zones}")
+            unassign_success = unassign_all_customers_from_zones(delete_existing_zones)
+            if not unassign_success:
+                logging.warning(f"⚠️ Failed to unassign some customers from zones, continuing with deletion anyway")
+            
+            # Delete ONLY the specified zones (now with customers already unassigned)
+            # Use verify=True to ensure complete deletion before proceeding
+            logging.info(f"Deleting zones from database: {delete_existing_zones}")
+            delete_success = delete_zones(delete_existing_zones, verify=True)
+            if not delete_success:
+                raise ValueError(
+                    f"Failed to delete zones completely: {delete_existing_zones}. "
+                    f"Some zones may still exist in the database. Please try again or delete manually."
+                )
+            
+            logging.info(f"✅ Successfully deleted and verified removal of {len(delete_existing_zones)} zone(s)")
         
         # Generate new zones
         response = process_zoning_request(payload, persist=False)  # Don't persist yet, we'll merge first
         
         # If regenerating, merge assignments: keep existing for customers not in deleted zones
-        new_zone_ids: set[str] = set()
         if delete_existing_zones and existing_assignments:
             merged_assignments = existing_assignments.copy()
-            # Only update assignments for customers that were in deleted zones
+            # Update assignments for customers that were in deleted zones
             for customer_id, new_zone_id in response.assignments.items():
                 if customer_id in customers_to_regenerate:
                     # This customer was in a deleted zone, use new assignment
                     merged_assignments[customer_id] = new_zone_id
-                    new_zone_ids.add(new_zone_id)  # Track which zones are newly generated
                 elif customer_id not in merged_assignments:
                     # New customer (shouldn't happen, but handle it)
                     merged_assignments[customer_id] = new_zone_id
-                    new_zone_ids.add(new_zone_id)
             
             # Update response with merged assignments
             response.assignments = merged_assignments
@@ -103,57 +116,23 @@ def generate_zones(
             ]
         
         # Now persist to database
-        # When regenerating, we need to save only the NEW zones (not existing ones)
+        # CRITICAL: When regenerating, we save ALL zones from the response
+        # The old zones were already deleted, so we need to save all new zones
+        # Pass the deleted zone IDs so duplicate check knows these were just deleted
         if payload.persist:
             try:
                 from ...persistence.database import save_zones_to_database
                 
-                # If regenerating, filter to only save new zones
-                if delete_existing_zones and new_zone_ids:
-                    # Get list of existing zone IDs (excluding deleted ones)
-                    existing_zone_ids = set(existing_assignments.values())
-                    
-                    # Filter response to only include newly generated zones
-                    filtered_response = response.model_dump()
-                    
-                    # Filter assignments to only include customers in new zones
-                    filtered_assignments = {
-                        customer_id: zone_id
-                        for customer_id, zone_id in response.assignments.items()
-                        if zone_id in new_zone_ids
-                    }
-                    filtered_response["assignments"] = filtered_assignments
-                    
-                    # Filter counts to only new zones
-                    filtered_counts = [
-                        {"zone_id": count.zone_id, "customer_count": count.customer_count}
-                        for count in response.counts
-                        if count.zone_id in new_zone_ids
-                    ]
-                    filtered_response["counts"] = filtered_counts
-                    
-                    # Filter polygons to only new zones
-                    if "map_overlays" in filtered_response.get("metadata", {}):
-                        polygons = filtered_response["metadata"]["map_overlays"].get("polygons", [])
-                        filtered_polygons = [
-                            p for p in polygons
-                            if p.get("zone_id") in new_zone_ids
-                        ]
-                        filtered_response["metadata"]["map_overlays"]["polygons"] = filtered_polygons
-                    
-                    # Save only new zones
-                    save_zones_to_database(
-                        zones_response=filtered_response,
-                        city=payload.city,
-                        method=payload.method,
-                    )
-                else:
-                    # Normal generation - save all zones
-                    save_zones_to_database(
-                        zones_response=response.model_dump(),
-                        city=payload.city,
-                        method=payload.method,
-                    )
+                # Save ALL zones from the response
+                # If we just deleted zones, pass that info so duplicate check is smarter
+                recently_deleted_zones = delete_existing_zones if delete_existing_zones else None
+                save_zones_to_database(
+                    zones_response=response.model_dump(),
+                    city=payload.city,
+                    method=payload.method,
+                    check_duplicates=True,  # Ensure no duplicates - this will delete any remaining old zones
+                    recently_deleted_zone_ids=recently_deleted_zones,  # Zones we just deleted - skip duplicate check for these
+                )
             except Exception as exc:
                 import logging
                 logging.warning(f"Failed to save zones to database: {exc}")
@@ -205,13 +184,42 @@ def get_zones(
                 }
             }
         
+        # CRITICAL: Deduplicate zones by zone_id - keep only the most recent one
+        # This prevents old and new zones with the same ID from appearing together
+        # This is essential to prevent overlapping zones that ERB cannot accept
+        # NOTE: We only deduplicate in the response, NOT in the database
+        # Database cleanup should happen during regeneration, not during retrieval
+        seen_zone_ids: set[str] = set()
+        unique_zones: list[dict[str, Any]] = []
+        duplicate_count = 0
+        
+        # Zones are already ordered by created_at desc, so first occurrence is most recent
+        for zone in db_zones:
+            zone_id = zone.get("name", "")
+            if zone_id:
+                if zone_id not in seen_zone_ids:
+                    seen_zone_ids.add(zone_id)
+                    unique_zones.append(zone)
+                else:
+                    duplicate_count += 1
+                    # Log duplicate for debugging (but don't delete - that should happen during regeneration)
+                    import logging
+                    logging.warning(f"⚠️ Duplicate zone_id found and skipped in response: {zone_id} (created_at: {zone.get('created_at')})")
+        
+        if duplicate_count > 0:
+            import logging
+            logging.warning(
+                f"⚠️ Found {duplicate_count} duplicate zone record(s) - kept only most recent versions in response. "
+                f"To clean up duplicates, regenerate the affected zones."
+            )
+        
         # Group zones by their generation run (same city + method + created_at grouping)
         # For simplicity, we'll group all zones for the same city/method together
         assignments: dict[str, str] = {}
         counts: list[dict[str, Any]] = []
         polygons: list[dict[str, Any]] = []
         
-        for zone in db_zones:
+        for zone in unique_zones:
             zone_id = zone.get("name", "")
             customer_count = zone.get("customer_count", 0)
             method_val = zone.get("method", "")

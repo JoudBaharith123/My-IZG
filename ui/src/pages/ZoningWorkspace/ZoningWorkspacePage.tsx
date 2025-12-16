@@ -290,17 +290,23 @@ export function ZoningWorkspacePage() {
     return cityLabel + ' - ' + lastRunLabel
   }, [city, lastRunLabel])
 
+  // Calculate actual customer count for selected zone based on assignments
+  const selectedZoneCustomerCount = useMemo(() => {
+    if (!selectedZone || !effectiveResult?.assignments) {
+      return null
+    }
+    
+    const assignments = effectiveResult.assignments
+    // Count customers assigned to this zone in the assignments
+    const count = Object.values(assignments).filter(zoneId => zoneId === selectedZone).length
+    return count
+  }, [selectedZone, effectiveResult?.assignments])
+
   const zoneMarkers = useMemo(() => {
     if (!customerPoints.length) {
       return []
     }
     const assignments = effectiveResult?.assignments ?? {}
-    
-    // Debug: Log assignments to help diagnose issues
-    if (selectedZone && Object.keys(assignments).length > 0) {
-      const assignedCustomers = Object.entries(assignments).filter(([_, zone]) => zone === selectedZone)
-      console.log(`Zone ${selectedZone} has ${assignedCustomers.length} customers in assignments`)
-    }
     
     // Use smaller markers for large datasets
     const markerRadius = customerPoints.length > 2000 ? 3 : customerPoints.length > 1000 ? 4 : 6
@@ -321,18 +327,25 @@ export function ZoningWorkspacePage() {
         zoneColorMap[assignedZone] ??
         (assignedZone === 'Unassigned' ? '#6b7280' : colorFromString(assignedZone))
 
-      const nameParts: string[] = []
+      // Format tooltip with customer name as primary info
+      let tooltipText = ''
       if (customer.customer_name) {
-        nameParts.push(customer.customer_name)
+        tooltipText = `${customer.customer_name}\n${customer.customer_id}`
+      } else {
+        tooltipText = customer.customer_id
       }
-      nameParts.push(customer.customer_id)
+      tooltipText += `\nZone: ${assignedZone}`
 
       return {
         id: customer.customer_id,
         position: [customer.latitude, customer.longitude] as [number, number],
         color: markerColor,
         radius: markerRadius,
-        tooltip: `${nameParts.join(' - ')} - ${assignedZone}`,
+        tooltip: tooltipText,
+        // Store customer info for potential popup
+        customerName: customer.customer_name || customer.customer_id,
+        customerId: customer.customer_id,
+        zone: assignedZone,
       }
     })
   }, [customerPoints, effectiveResult, zoneColorMap, selectedZone])
@@ -562,13 +575,28 @@ export function ZoningWorkspacePage() {
               ) : effectiveResult && effectiveResult.counts && Array.isArray(effectiveResult.counts) && effectiveResult.counts.length > 0 ? (
                 <>
                   <option value="">All Zones</option>
-                  {effectiveResult.counts
-                    .sort((a, b) => a.zone_id.localeCompare(b.zone_id))
-                    .map((zoneCount) => (
-                      <option key={zoneCount.zone_id} value={zoneCount.zone_id}>
-                        {zoneCount.zone_id} ({zoneCount.customer_count} customers)
-                      </option>
-                    ))}
+                  {(() => {
+                    // Calculate actual counts from assignments for accuracy
+                    const assignments = effectiveResult.assignments ?? {}
+                    const actualCounts = new Map<string, number>()
+                    Object.values(assignments).forEach((zoneId) => {
+                      if (zoneId) {
+                        actualCounts.set(zoneId, (actualCounts.get(zoneId) || 0) + 1)
+                      }
+                    })
+                    
+                    return effectiveResult.counts
+                      .sort((a, b) => a.zone_id.localeCompare(b.zone_id))
+                      .map((zoneCount) => {
+                        // Use actual count from assignments if available, otherwise use stored count
+                        const actualCount = actualCounts.get(zoneCount.zone_id) ?? zoneCount.customer_count
+                        return (
+                          <option key={zoneCount.zone_id} value={zoneCount.zone_id}>
+                            {zoneCount.zone_id} ({actualCount} customers)
+                          </option>
+                        )
+                      })
+                  })()}
                 </>
               ) : (
                 <option value="">No zones generated yet</option>
@@ -784,7 +812,13 @@ export function ZoningWorkspacePage() {
           <FilterPanel
             onFiltersChange={setActiveFilters}
             activeFilters={activeFilters}
-            customerCount={selectedZone ? zoneMarkers.length : customerPoints.length}
+            customerCount={
+              selectedZone && selectedZoneCustomerCount !== null
+                ? selectedZoneCustomerCount  // Use actual count from assignments
+                : selectedZone
+                ? zoneMarkers.length  // Fallback to marker count if assignments not available
+                : customerPoints.length
+            }
             totalCustomers={customerTotal}
             selectedCity={city !== ALL_CITIES_VALUE ? city : undefined}
           />

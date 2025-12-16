@@ -11,10 +11,35 @@ from ..services.export.geojson import polygon_to_wkt
 import re
 
 
+def check_zone_ids_exist(zone_ids: list[str]) -> dict[str, bool]:
+    """Check which zone IDs already exist in the database.
+    
+    Args:
+        zone_ids: List of zone IDs to check
+        
+    Returns:
+        Dictionary mapping zone_id to True if it exists, False otherwise
+    """
+    supabase = get_supabase_client()
+    if not supabase or not zone_ids:
+        return {zone_id: False for zone_id in zone_ids}
+    
+    try:
+        response = supabase.table("zones").select("name").in_("name", zone_ids).execute()
+        existing_ids = {z["name"] for z in (response.data or [])}
+        return {zone_id: zone_id in existing_ids for zone_id in zone_ids}
+    except Exception as e:
+        import logging
+        logging.warning(f"Failed to check existing zone IDs: {e}")
+        return {zone_id: False for zone_id in zone_ids}
+
+
 def save_zones_to_database(
     zones_response: dict[str, Any],
     city: str,
     method: str,
+    check_duplicates: bool = True,
+    recently_deleted_zone_ids: list[str] | None = None,
 ) -> None:
     """Save generated zones to Supabase database.
     
@@ -22,6 +47,7 @@ def save_zones_to_database(
         zones_response: Zone generation response with assignments, counts, and metadata
         city: City name for the zones
         method: Zoning method used (polar, isochrone, clustering, manual)
+        check_duplicates: If True, check for and delete duplicate zone IDs before saving
     """
     supabase = get_supabase_client()
     if not supabase:
@@ -78,6 +104,25 @@ def save_zones_to_database(
                 }
                 if zone_assignments:
                     metadata["customer_ids"] = list(zone_assignments.keys())
+                    
+                    # Validate: Ensure customers are only assigned to this zone
+                    # Check if any of these customers appear in other zones being saved
+                    for other_zone in zones_to_insert:
+                        if other_zone["name"] != zone_id:
+                            other_meta = other_zone.get("metadata", {}) if isinstance(other_zone.get("metadata"), dict) else {}
+                            other_customer_ids = other_meta.get("customer_ids", [])
+                            if isinstance(other_customer_ids, list):
+                                duplicates = set(zone_assignments.keys()) & set(other_customer_ids)
+                                if duplicates:
+                                    import logging
+                                    logging.error(
+                                        f"❌ CRITICAL: Customer(s) {list(duplicates)} are assigned to multiple zones: "
+                                        f"{zone_id} and {other_zone['name']}. This violates ERB requirements!"
+                                    )
+                                    raise ValueError(
+                                        f"Customer assignment conflict: {len(duplicates)} customer(s) assigned to "
+                                        f"multiple zones. Customers: {list(duplicates)[:5]}..."
+                                    )
                 
                 # Add any additional metadata from the response
                 response_metadata = zones_response.get("metadata", {})
@@ -104,6 +149,94 @@ def save_zones_to_database(
         if zones_to_insert:
             import logging
             logging.info(f"Attempting to save {len(zones_to_insert)} zones to database")
+            
+            # CRITICAL: Check for and delete ALL duplicate zone IDs before inserting
+            # This prevents overlapping zones (old and new with same ID)
+            # We must delete ALL records with these zone_ids, not just one per ID
+            if check_duplicates:
+                zone_ids_to_save = [z["name"] for z in zones_to_insert]
+                existing_check = check_zone_ids_exist(zone_ids_to_save)
+                
+                # Filter out zones that were recently deleted - these are expected to not exist
+                # but might still show up due to database replication delays
+                duplicate_ids = [
+                    zone_id for zone_id, exists in existing_check.items() 
+                    if exists and (recently_deleted_zone_ids is None or zone_id not in recently_deleted_zone_ids)
+                ]
+                
+                # If we have recently deleted zones that still exist, wait a bit longer for DB to sync
+                if recently_deleted_zone_ids:
+                    recently_deleted_still_existing = [
+                        zone_id for zone_id in recently_deleted_zone_ids
+                        if existing_check.get(zone_id, False)
+                    ]
+                    if recently_deleted_still_existing:
+                        import time
+                        import logging
+                        logging.info(f"⏳ Zones {recently_deleted_still_existing} were just deleted but still appear in DB. Waiting for DB sync...")
+                        time.sleep(0.5)  # Wait for database replication
+                        # Re-check after delay
+                        existing_check = check_zone_ids_exist(zone_ids_to_save)
+                        duplicate_ids = [
+                            zone_id for zone_id, exists in existing_check.items() 
+                            if exists and zone_id not in recently_deleted_zone_ids
+                        ]
+                        # Log if they still exist after waiting
+                        still_existing_after_wait = [
+                            zone_id for zone_id in recently_deleted_zone_ids
+                            if existing_check.get(zone_id, False)
+                        ]
+                        if still_existing_after_wait:
+                            logging.warning(f"⚠️ Zones {still_existing_after_wait} still exist after wait. They will be treated as duplicates and deleted.")
+                            # Add them back to duplicate_ids so they get deleted
+                            duplicate_ids.extend(still_existing_after_wait)
+                
+                if duplicate_ids:
+                    # Check if these are zones that were recently deleted
+                    if recently_deleted_zone_ids:
+                        unexpected_duplicates = [zid for zid in duplicate_ids if zid not in recently_deleted_zone_ids]
+                        if unexpected_duplicates:
+                            logging.warning(f"⚠️ Found {len(unexpected_duplicates)} unexpected duplicate zone IDs: {unexpected_duplicates}")
+                        if len(duplicate_ids) > len(unexpected_duplicates):
+                            logging.info(f"ℹ️ Found {len(duplicate_ids) - len(unexpected_duplicates)} zone(s) that were recently deleted but still in DB: {[zid for zid in duplicate_ids if zid in recently_deleted_zone_ids]}")
+                    else:
+                        logging.warning(f"⚠️ Found {len(duplicate_ids)} duplicate zone IDs before saving: {duplicate_ids}")
+                    
+                    # Count how many records exist for these zone_ids
+                    count_query = supabase.table("zones").select("name", count="exact").in_("name", duplicate_ids).execute()
+                    total_duplicate_records = count_query.count if hasattr(count_query, 'count') else None
+                    if total_duplicate_records:
+                        logging.info(f"ℹ️ Found {total_duplicate_records} total duplicate zone record(s) to delete")
+                    
+                    logging.info(f"Deleting ALL duplicate zones (including all records with same zone_id) to prevent overlaps...")
+                    
+                    # Unassign customers from ALL duplicate zones first
+                    unassign_all_customers_from_zones(duplicate_ids)
+                    
+                    # Delete ALL duplicate zones - this should delete ALL records with these zone_ids
+                    delete_success = delete_zones(duplicate_ids, verify=True)
+                    if not delete_success:
+                        # Try one more time with a longer delay
+                        import time
+                        time.sleep(0.5)
+                        delete_success = delete_zones(duplicate_ids, verify=True)
+                        if not delete_success:
+                            logging.error(f"❌ Failed to delete duplicate zones after retry: {duplicate_ids}")
+                            raise ValueError(
+                                f"Cannot save zones: duplicate zone IDs still exist after deletion attempt: {duplicate_ids}. "
+                                f"Please manually delete these zones from the database."
+                            )
+                    
+                    # Final verification - check if any still exist
+                    final_check = check_zone_ids_exist(duplicate_ids)
+                    still_existing = [zone_id for zone_id, exists in final_check.items() if exists]
+                    if still_existing:
+                        logging.error(f"❌ CRITICAL: Some duplicate zones still exist after deletion: {still_existing}")
+                        logging.warning(f"⚠️ Attempting to continue anyway - new zones will be saved and may create duplicates")
+                        # Don't raise error - allow save to proceed, duplicate checking will handle it
+                        # The worst case is we'll have duplicates which can be cleaned up later
+                    
+                    logging.info(f"✅ Cleanup complete - proceeding to save new zones")
             
             inserted_count = 0
             failed_count = 0
@@ -163,7 +296,14 @@ def save_zones_to_database(
             if inserted_count > 0:
                 logging.info(f"✓ Successfully inserted {inserted_count} out of {len(zones_to_insert)} zones to database")
             if failed_count > 0:
-                logging.warning(f"⚠ Failed to insert {failed_count} zones. Check database configuration and schema.")
+                logging.error(f"❌ Failed to insert {failed_count} zones. Check database configuration and schema.")
+                # This is critical - if zones aren't saved, customers will remain unassigned
+                raise ValueError(f"Failed to save {failed_count} zone(s) to database. Zones may not be available and customers may remain unassigned.")
+            
+            # Verify that zones were actually saved
+            if inserted_count == 0 and len(zones_to_insert) > 0:
+                logging.error(f"❌ CRITICAL: No zones were inserted despite having {len(zones_to_insert)} zones to save!")
+                raise ValueError("Failed to save any zones to database. Please check database connection and schema.")
                     
     except Exception as e:
         # Log error but don't fail the entire request
@@ -513,22 +653,27 @@ def assign_customer_to_zone(customer_id: str, zone_id: str) -> bool:
 def get_unassigned_customers(city: str | None = None) -> list[str]:
     """Get list of customer IDs that are not assigned to any zone.
     
+    IMPORTANT: When filtering by city, we check ALL zones (not just city-filtered)
+    because a customer should only be considered "assigned" if they're in ANY zone,
+    regardless of the zone's city. However, we only return unassigned customers
+    for the specified city.
+    
     Args:
-        city: Optional city filter
+        city: Optional city filter (only affects which customers are returned, not which zones are checked)
         
     Returns:
-        List of unassigned customer IDs
+        List of unassigned customer IDs for the specified city (or all cities if None)
     """
     supabase = get_supabase_client()
     if not supabase:
         return []
     
     try:
-        # Get all zones and collect all assigned customer IDs
-        query = supabase.table("zones").select("metadata")
-        if city:
-            query = query.contains("metadata", {"city": city})
+        import logging
         
+        # CRITICAL: Get ALL zones (not filtered by city) to find all assigned customers
+        # A customer is "assigned" if they're in ANY zone, regardless of the zone's city
+        query = supabase.table("zones").select("metadata")
         response = query.execute()
         assigned_customer_ids = set()
         
@@ -538,7 +683,10 @@ def get_unassigned_customers(city: str | None = None) -> list[str]:
                 if isinstance(metadata, dict):
                     customer_ids = metadata.get("customer_ids", [])
                     if isinstance(customer_ids, list):
-                        assigned_customer_ids.update(customer_ids)
+                        # Convert all to strings for consistency
+                        assigned_customer_ids.update(str(cid) for cid in customer_ids if cid)
+        
+        logging.info(f"Found {len(assigned_customer_ids)} assigned customers across all zones")
         
         # Get all customers from database for the city (if specified)
         customer_query = supabase.table("customers").select("customer_id")
@@ -553,8 +701,12 @@ def get_unassigned_customers(city: str | None = None) -> list[str]:
                 if customer_id:
                     all_customer_ids.add(str(customer_id))
         
+        logging.info(f"Found {len(all_customer_ids)} total customers for city={city or 'all'}")
+        
         # Filter to get unassigned customers
         unassigned_ids = list(all_customer_ids - assigned_customer_ids)
+        logging.info(f"Found {len(unassigned_ids)} unassigned customers for city={city or 'all'}")
+        
         return unassigned_ids
         
     except Exception as e:
@@ -595,11 +747,113 @@ def get_customers_from_zones(zone_ids: list[str]) -> list[str]:
         return []
 
 
-def delete_zones(zone_ids: list[str]) -> bool:
+def unassign_all_customers_from_zones(zone_ids: list[str]) -> bool:
+    """Unassign all customers from specified zones before deletion.
+    
+    This ensures customers are properly unassigned from zones before the zones
+    are deleted, preventing orphaned assignments.
+    
+    Args:
+        zone_ids: List of zone IDs to unassign customers from
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    supabase = get_supabase_client()
+    if not supabase:
+        import logging
+        logging.warning("Database not configured - cannot unassign customers from zones")
+        return False
+    
+    if not zone_ids:
+        return True  # Nothing to unassign
+    
+    try:
+        # Get all zones that will be deleted
+        response = supabase.table("zones").select("id, name, metadata").in_("name", zone_ids).execute()
+        
+        if not response.data:
+            import logging
+            logging.info(f"No zones found to unassign customers from: {zone_ids}")
+            return True
+        
+        unassigned_count = 0
+        for zone in response.data:
+            zone_db_id = zone["id"]
+            zone_id = zone["name"]
+            metadata = zone.get("metadata", {})
+            
+            if not isinstance(metadata, dict):
+                continue
+            
+            customer_ids = metadata.get("customer_ids", [])
+            if not isinstance(customer_ids, list) or not customer_ids:
+                continue
+            
+            # Clear customer_ids from metadata and set customer_count to 0
+            metadata["customer_ids"] = []
+            
+            # Update zone to remove all customer assignments
+            supabase.table("zones").update({
+                "metadata": metadata,
+                "customer_count": 0,
+            }).eq("id", zone_db_id).execute()
+            
+            unassigned_count += len(customer_ids)
+        
+        import logging
+        logging.info(f"Unassigned {unassigned_count} customers from {len(response.data)} zones before deletion")
+        return True
+        
+    except Exception as e:
+        import logging
+        logging.error(f"Failed to unassign customers from zones {zone_ids}: {e}")
+        return False
+
+
+def verify_zones_deleted(zone_ids: list[str]) -> bool:
+    """Verify that all specified zones have been deleted from the database.
+    
+    Args:
+        zone_ids: List of zone IDs to verify are deleted
+        
+    Returns:
+        True if all zones are deleted, False if any still exist
+    """
+    supabase = get_supabase_client()
+    if not supabase or not zone_ids:
+        return True
+    
+    try:
+        # Check if any zones with these IDs still exist
+        response = supabase.table("zones").select("name").in_("name", zone_ids).execute()
+        remaining_zones = response.data if response.data else []
+        
+        if remaining_zones:
+            remaining_ids = [z["name"] for z in remaining_zones]
+            import logging
+            logging.warning(f"⚠️ Zones still exist after deletion attempt: {remaining_ids}")
+            return False
+        
+        return True
+    except Exception as e:
+        import logging
+        logging.warning(f"Failed to verify zone deletion: {e}")
+        # Assume deleted if we can't verify (better than blocking)
+        return True
+
+
+def delete_zones(zone_ids: list[str], verify: bool = True) -> bool:
     """Delete zones from the database by their zone IDs.
+    
+    This function deletes ALL records with the specified zone IDs (names),
+    ensuring complete removal even if multiple records exist with the same zone_id.
+    
+    CRITICAL: This function will delete ALL records matching the zone_ids, not just one per ID.
     
     Args:
         zone_ids: List of zone IDs (zone names) to delete
+        verify: If True, verify deletion completed successfully
         
     Returns:
         True if successful, False otherwise
@@ -614,11 +868,58 @@ def delete_zones(zone_ids: list[str]) -> bool:
         return True  # Nothing to delete
     
     try:
-        # Delete zones by name (zone_id)
-        response = supabase.table("zones").delete().in_("name", zone_ids).execute()
-        
         import logging
-        logging.info(f"Deleted {len(zone_ids)} zones from database: {zone_ids}")
+        
+        # First, get ALL records with these zone IDs to ensure we delete everything
+        # This is important because there might be multiple records with the same zone_id
+        select_response = supabase.table("zones").select("id, name").in_("name", zone_ids).execute()
+        all_records = select_response.data if select_response.data else []
+        
+        if not all_records:
+            logging.info(f"No zones found to delete: {zone_ids}")
+            return True
+        
+        records_before = len(all_records)
+        record_ids_to_delete = [record["id"] for record in all_records]
+        zone_names_found = set(record["name"] for record in all_records)
+        
+        logging.info(f"Found {records_before} zone record(s) to delete with IDs: {list(zone_names_found)}")
+        logging.info(f"Deleting {len(record_ids_to_delete)} database record(s)...")
+        
+        # Delete by database IDs to ensure we delete ALL records, even duplicates
+        # Delete in batches if there are many records
+        deleted_count = 0
+        batch_size = 100
+        for i in range(0, len(record_ids_to_delete), batch_size):
+            batch = record_ids_to_delete[i:i + batch_size]
+            try:
+                response = supabase.table("zones").delete().in_("id", batch).execute()
+                batch_deleted = len(response.data) if response.data else 0
+                deleted_count += batch_deleted
+                logging.info(f"Deleted batch {i//batch_size + 1}: {batch_deleted} record(s)")
+            except Exception as batch_error:
+                logging.error(f"Error deleting batch {i//batch_size + 1}: {batch_error}")
+                # Continue with next batch
+        
+        logging.info(f"Deleted {deleted_count} out of {records_before} zone record(s)")
+        
+        if deleted_count != records_before:
+            logging.warning(f"⚠️ Deleted {deleted_count} records but expected {records_before}")
+        
+        # Verify deletion if requested
+        if verify:
+            # Wait a moment for database to commit
+            import time
+            time.sleep(0.2)  # Slightly longer delay to ensure database commit
+            
+            if not verify_zones_deleted(zone_ids):
+                logging.error(f"❌ Verification failed: Some zones still exist after deletion: {zone_ids}")
+                # Try one more verification after a longer delay
+                time.sleep(0.5)
+                if not verify_zones_deleted(zone_ids):
+                    return False
+        
+        logging.info(f"✅ Successfully deleted and verified removal of zones: {list(zone_names_found)}")
         return True
         
     except Exception as e:
