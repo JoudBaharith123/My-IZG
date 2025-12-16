@@ -48,6 +48,41 @@ const customerCountStyles = `
     border-top-color: #3b82f6 !important;
   }
 
+  /* Editable zone polygon styling - visible vertices */
+  .editable-zone-polygon {
+    stroke-dasharray: 5, 5;
+    animation: dash 20s linear infinite;
+  }
+
+  @keyframes dash {
+    to {
+      stroke-dashoffset: -1000;
+    }
+  }
+
+  /* Make vertices more visible */
+  .leaflet-marker-icon.editable-vertex-icon {
+    background-color: #3b82f6 !important;
+    border: 3px solid white !important;
+    border-radius: 50% !important;
+    width: 12px !important;
+    height: 12px !important;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3) !important;
+    cursor: move !important;
+  }
+
+  .leaflet-marker-icon.editable-vertex-icon:hover {
+    background-color: #2563eb !important;
+    transform: scale(1.3);
+    transition: transform 0.2s;
+  }
+
+  /* Middle markers (for adding new vertices) */
+  .leaflet-edit-marker-selected {
+    background-color: #10b981 !important;
+    border: 2px solid white !important;
+  }
+
   /* Ensure draw controls are visible and properly positioned */
   .leaflet-draw {
     z-index: 1000 !important;
@@ -401,11 +436,15 @@ function DrawControl({
 
       const latLngs: LatLngTuple[] = polygon.coordinates.map((coord) => [coord[0], coord[1]])
       const polygonColor = polygon.color || '#3b82f6'
+      
+      // Enhanced styling for editable polygons
       const layer = L.polygon(latLngs, {
-        color: polygonColor,
+        color: polygon.isEditing ? polygonColor : polygonColor,
         fillColor: polygonColor,
-        weight: 3,
+        weight: polygon.isEditing ? 4 : 3, // Thicker border when editing
         fillOpacity: 0.15,
+        opacity: polygon.isEditing ? 0.9 : 0.7,
+        className: polygon.isEditing ? 'editable-zone-polygon' : '',
       })
 
       // Store polygon ID on the layer for reference
@@ -424,6 +463,28 @@ function DrawControl({
           className: 'customer-count-label',
           opacity: 0.9
         })
+      }
+
+      // If polygon is marked as editing, automatically enable editing mode
+      if (polygon.isEditing && drawControlRef.current) {
+        // Enable editing for this polygon automatically
+        // The edit handler will be enabled when the draw control is initialized
+        // We'll trigger edit mode programmatically
+        setTimeout(() => {
+          try {
+            // Find the edit button and click it to enable editing
+            const editButton = document.querySelector('.leaflet-draw-edit-edit') as HTMLElement
+            if (editButton && !editButton.classList.contains('leaflet-disabled')) {
+              // Check if editing is already enabled
+              const isEditingActive = featureGroupRef.current?.getLayers().some((l: any) => l.editing?.enabled())
+              if (!isEditingActive) {
+                editButton.click()
+              }
+            }
+          } catch (e) {
+            console.warn('Could not auto-enable edit mode:', e)
+          }
+        }, 100)
       }
 
       // Note: Edit events are handled globally via L.Draw.Event.EDITED listener above

@@ -1224,25 +1224,15 @@ export function ZoningWorkspacePage() {
               className="h-[calc(100vh-12rem)]"
             />
           ) : editMode ? (
-            <DrawableMap
+            <InteractiveMap
               center={mapViewport.center}
               zoom={mapViewport.zoom}
-              caption={`${mapCaption} - Edit Mode: Click and drag polygon vertices to edit zones`}
+              caption={`${mapCaption} - Edit Mode: Drag the blue circles at polygon corners to reshape zones. Changes are saved automatically.`}
               markers={zoneMarkers}
-              drawnPolygons={polygonOverlays.map((polygon) => {
+              polygons={polygonOverlays}
+              editable={true}
+              onPolygonEdit={async (polygonId, coordinates) => {
                 // Extract zone_id from polygon id (format: "zone_id-polygon")
-                const zoneId = polygon.id.replace('-polygon', '')
-                return {
-                  id: polygon.id,
-                  zoneId: zoneId,
-                  coordinates: polygon.positions.map((pos) => [pos[0], pos[1]] as [number, number]),
-                  color: polygon.color,
-                  customerCount: parseInt(polygon.tooltip?.match(/\((\d+) customers\)/)?.[1] || '0'),
-                  isEditing: true,  // Enable editing for all polygons in edit mode
-                }
-              })}
-              onPolygonEdited={async (polygonId, coordinates) => {
-                // Extract zone_id from polygon id
                 const zoneId = polygonId.replace('-polygon', '')
                 
                 try {
@@ -1251,18 +1241,11 @@ export function ZoningWorkspacePage() {
                     coordinates: coordinates as Array<[number, number]>,
                   })
                   console.log(`✅ Zone ${zoneId} geometry updated successfully`)
+                  setLastError(null)
                 } catch (error) {
                   console.error(`❌ Failed to update zone ${zoneId}:`, error)
                   setLastError(`Failed to update zone ${zoneId}. Please try again.`)
                 }
-              }}
-              onPolygonCreated={() => {
-                // Don't allow creating new polygons in edit mode
-                setLastError('Edit mode: Use zone generation to create new zones')
-              }}
-              onPolygonDeleted={() => {
-                // Don't allow deleting polygons in edit mode (will be separate feature)
-                setLastError('Use the delete zone feature to remove zones')
               }}
               className="h-[calc(100vh-12rem)]"
             />
@@ -1273,6 +1256,7 @@ export function ZoningWorkspacePage() {
               caption={mapCaption}
               markers={zoneMarkers}
               polygons={polygonOverlays}
+              editable={false}
               className="h-[calc(100vh-12rem)]"
             />
           )}
