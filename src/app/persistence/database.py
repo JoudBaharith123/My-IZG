@@ -444,7 +444,20 @@ def update_zone_geometry(zone_id: str, coordinates: list[tuple[float, float]]) -
     supabase = get_supabase_client()
     if not supabase:
         import logging
-        logging.warning("Database not configured - cannot update zone geometry")
+        logging.error("Database not configured - cannot update zone geometry. Check IZG_SUPABASE_URL and IZG_SUPABASE_KEY in .env file")
+        return False
+    
+    # Test connection before attempting update
+    try:
+        # Quick connection test - try to query a simple table
+        test_response = supabase.table("zones").select("id").limit(1).execute()
+    except Exception as conn_error:
+        import logging
+        error_msg = str(conn_error)
+        if "getaddrinfo" in error_msg or "11001" in error_msg:
+            logging.error(f"Cannot connect to Supabase database. DNS resolution failed. Check your IZG_SUPABASE_URL in .env file. Error: {error_msg}")
+        else:
+            logging.error(f"Cannot connect to Supabase database. Error: {error_msg}")
         return False
     
     if not coordinates or len(coordinates) < 3:
@@ -453,43 +466,82 @@ def update_zone_geometry(zone_id: str, coordinates: list[tuple[float, float]]) -
         return False
     
     try:
+        import logging
+        
         # Convert coordinates to WKT format
         geometry_wkt = polygon_to_wkt(coordinates)
+        logging.info(f"📤 UPDATE_ZONE_GEOMETRY: zone_id={zone_id}, coord_count={len(coordinates)}")
+        logging.info(f"📤 COORDINATES RECEIVED: {coordinates[:3]}... (first 3 points)")
+        logging.info(f"📤 WKT GENERATED: {geometry_wkt[:100]}...")
         
-        # Update the zone's geometry
-        # First, try to find the zone (get the most recent one if multiple exist)
-        response = supabase.table("zones").select("id").eq("name", zone_id).order("created_at", desc=True).limit(1).execute()
+        # Update the zone's geometry with retry logic for network errors
+        max_retries = 3
+        retry_count = 0
         
-        if not response.data or len(response.data) == 0:
-            import logging
-            logging.warning(f"Zone '{zone_id}' not found in database")
-            return False
-        
-        zone_db_id = response.data[0]["id"]
-        
-        # Update geometry using geometry_wkt (will be converted by trigger)
-        update_response = supabase.table("zones").update({
-            "geometry_wkt": geometry_wkt,
-        }).eq("id", zone_db_id).execute()
-        
-        # Also update metadata coordinates as backup
-        zone_data = supabase.table("zones").select("metadata").eq("id", zone_db_id).execute()
-        if zone_data.data:
-            metadata = zone_data.data[0].get("metadata", {})
-            if isinstance(metadata, dict):
-                metadata["coordinates"] = coordinates
-                metadata["geometry_updated"] = True
-                supabase.table("zones").update({
-                    "metadata": metadata
+        while retry_count < max_retries:
+            try:
+                # First, try to find the zone (get the most recent one if multiple exist)
+                response = supabase.table("zones").select("id").eq("name", zone_id).order("created_at", desc=True).limit(1).execute()
+                
+                if not response.data or len(response.data) == 0:
+                    logging.warning(f"❌ Zone '{zone_id}' not found in database")
+                    return False
+                
+                zone_db_id = response.data[0]["id"]
+                logging.info(f"📍 Found zone in DB: zone_id={zone_id}, db_id={zone_db_id}")
+                
+                # Update geometry using geometry_wkt (will be converted by trigger)
+                update_response = supabase.table("zones").update({
+                    "geometry_wkt": geometry_wkt,
                 }).eq("id", zone_db_id).execute()
-        
-        import logging
-        logging.info(f"Successfully updated geometry for zone '{zone_id}'")
-        return True
+                logging.info(f"✅ DB UPDATE geometry_wkt: response={update_response.data}")
+                
+                # Also update metadata coordinates as backup
+                zone_data = supabase.table("zones").select("metadata").eq("id", zone_db_id).execute()
+                if zone_data.data:
+                    metadata = zone_data.data[0].get("metadata", {})
+                    if isinstance(metadata, dict):
+                        metadata["coordinates"] = coordinates
+                        metadata["geometry_updated"] = True
+                        metadata_response = supabase.table("zones").update({
+                            "metadata": metadata
+                        }).eq("id", zone_db_id).execute()
+                        logging.info(f"✅ DB UPDATE metadata.coordinates: saved {len(coordinates)} points")
+                
+                # VERIFY: Read back the saved data to confirm
+                verify_response = supabase.table("zones").select("geometry_wkt, metadata").eq("id", zone_db_id).execute()
+                if verify_response.data:
+                    saved_wkt = verify_response.data[0].get("geometry_wkt", "")
+                    saved_meta = verify_response.data[0].get("metadata", {})
+                    saved_coords = saved_meta.get("coordinates", []) if isinstance(saved_meta, dict) else []
+                    logging.info(f"✅ VERIFIED SAVED DATA: wkt_length={len(saved_wkt)}, coord_count={len(saved_coords)}")
+                    if saved_coords:
+                        logging.info(f"✅ VERIFIED FIRST COORD: {saved_coords[0]}")
+                
+                logging.info(f"✅ Successfully updated geometry for zone '{zone_id}'")
+                return True
+                
+            except Exception as retry_error:
+                retry_count += 1
+                error_msg = str(retry_error)
+                # Check if it's a network/DNS error
+                if ("getaddrinfo" in error_msg or "11001" in error_msg or "network" in error_msg.lower()) and retry_count < max_retries:
+                    import logging
+                    import time
+                    logging.warning(f"Network error updating zone '{zone_id}' (attempt {retry_count}/{max_retries}): {error_msg}. Retrying...")
+                    time.sleep(1 * retry_count)  # Exponential backoff
+                    continue
+                else:
+                    raise  # Re-raise if not a network error or max retries reached
         
     except Exception as e:
         import logging
-        logging.error(f"Failed to update zone geometry for '{zone_id}': {e}")
+        error_msg = str(e)
+        # Check if it's a network/DNS error
+        if "getaddrinfo" in error_msg or "11001" in error_msg:
+            logging.error(f"Network error updating zone geometry for '{zone_id}': Cannot connect to database. Check your internet connection and Supabase configuration.")
+        else:
+            logging.error(f"Failed to update zone geometry for '{zone_id}': {e}")
         return False
 
 

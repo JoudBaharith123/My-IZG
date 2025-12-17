@@ -234,27 +234,14 @@ def get_zones(
                         if customer_id:
                             assignments[str(customer_id)] = zone_id
             
-            # Get coordinates from geometry (PostGIS returns as GeoJSON), geometry_wkt, or metadata
+            # Get coordinates from metadata (primary after edits), geometry_wkt, or geometry
             coordinates: list[tuple[float, float]] = []
             
-            # Try to get from geometry column first (PostGIS geometry as GeoJSON from Supabase)
-            geometry = zone.get("geometry")
-            if geometry:
-                coordinates = geojson_to_coordinates(geometry)
-            
-            # If no coordinates from geometry, try geometry_wkt (might still exist)
-            if not coordinates:
-                geometry_wkt = zone.get("geometry_wkt")
-                if geometry_wkt:
-                    coordinates = wkt_to_coordinates(geometry_wkt)
-            
-            # If still no coordinates, try to get from metadata (stored as backup)
-            if not coordinates and isinstance(metadata, dict):
+            # PRIORITY 1: Check metadata.coordinates first (this is where edits are saved)
+            if isinstance(metadata, dict):
                 coords_meta = metadata.get("coordinates")
-                if coords_meta and isinstance(coords_meta, list) and len(coords_meta) > 0:
-                    # Coordinates stored as list of [lat, lon] pairs
+                if coords_meta and isinstance(coords_meta, list) and len(coords_meta) >= 3:
                     try:
-                        coordinates = []
                         for coord in coords_meta:
                             if isinstance(coord, (list, tuple)) and len(coord) >= 2:
                                 lat = float(coord[0])
@@ -262,11 +249,18 @@ def get_zones(
                                 coordinates.append((lat, lon))
                     except (ValueError, TypeError, IndexError):
                         coordinates = []
-                else:
-                    # Try geometry_wkt in metadata (old format)
-                    geometry_wkt_meta = metadata.get("geometry_wkt")
-                    if geometry_wkt_meta:
-                        coordinates = wkt_to_coordinates(geometry_wkt_meta)
+            
+            # PRIORITY 2: Try geometry_wkt (also updated during edits)
+            if not coordinates or len(coordinates) < 3:
+                geometry_wkt = zone.get("geometry_wkt")
+                if geometry_wkt:
+                    coordinates = wkt_to_coordinates(geometry_wkt)
+            
+            # PRIORITY 3: Fall back to PostGIS geometry column (original data)
+            if not coordinates or len(coordinates) < 3:
+                geometry = zone.get("geometry")
+                if geometry:
+                    coordinates = geojson_to_coordinates(geometry)
             
             # Skip if we still don't have coordinates
             if not coordinates or len(coordinates) < 3:
@@ -383,10 +377,28 @@ def update_zone_geometry_endpoint(
         raise
     except Exception as exc:
         import logging
+        error_msg = str(exc)
         logging.exception(f"Error updating zone geometry: {exc}")
+        
+        # Provide more helpful error messages
+        if "getaddrinfo" in error_msg or "11001" in error_msg:
+            detail = (
+                f"Cannot connect to database. DNS resolution failed. "
+                f"Please check:\n"
+                f"1. Your internet connection\n"
+                f"2. IZG_SUPABASE_URL in .env file is correct\n"
+                f"3. Supabase project is active and accessible"
+            )
+        elif "not configured" in error_msg.lower():
+            detail = (
+                f"Database not configured. Please set IZG_SUPABASE_URL and IZG_SUPABASE_KEY in .env file"
+            )
+        else:
+            detail = f"Failed to update zone geometry: {error_msg}"
+        
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to update zone geometry: {str(exc)}"
+            detail=detail
         ) from exc
 
 

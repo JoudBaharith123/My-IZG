@@ -24,26 +24,18 @@ export function SimpleEditablePolygon({
   const polygonRef = useRef<L.Polygon | null>(null)
   const markersRef = useRef<L.Marker[]>([])
   const currentPositionsRef = useRef<LatLngTuple[]>(positions)
+  const isDraggingRef = useRef(false)
+  const isInitializedRef = useRef(false)
+  const hasLocalEditsRef = useRef(false) // Track if user has made local edits
 
+  // Initialize component once
   useEffect(() => {
     if (!map) return
     if (!positions || positions.length < 3) return
+    if (isInitializedRef.current) return // Don't recreate if already initialized
 
-    // Update ref with latest positions
+    // Store initial positions
     currentPositionsRef.current = [...positions]
-
-    // Remove old polygon and markers
-    if (polygonRef.current) {
-      map.removeLayer(polygonRef.current)
-    }
-    markersRef.current.forEach(marker => {
-      try {
-        map.removeLayer(marker)
-      } catch (e) {
-        // Already removed
-      }
-    })
-    markersRef.current = []
 
     // Create polygon - make sure it's closed
     const closedPositions = [...positions]
@@ -90,7 +82,12 @@ export function SimpleEditablePolygon({
         zIndexOffset: 1000,
       })
 
-      // Update polygon when vertex is dragged
+        // Update polygon when vertex is dragged
+        marker.on('dragstart', () => {
+          isDraggingRef.current = true
+          hasLocalEditsRef.current = true // Mark that user has made local edits
+        })
+
       marker.on('drag', () => {
         const newPos = marker.getLatLng()
         const newPositions = [...currentPositionsRef.current]
@@ -113,10 +110,35 @@ export function SimpleEditablePolygon({
         newPositions[index] = [newPos.lat, newPos.lng]
         currentPositionsRef.current = newPositions
         
-        // Call onEdit to save to database
-        if (onEdit) {
-          onEdit(id, newPositions)
+        // Update all markers to match new positions
+        markersRef.current.forEach((m, i) => {
+          if (i < newPositions.length) {
+            m.setLatLng(newPositions[i])
+          }
+        })
+        
+        // Ensure polygon is closed (first point = last point) before sending to backend
+        // Backend expects closed polygons
+        const closedPositions = [...newPositions]
+        if (closedPositions.length > 0) {
+          const first = closedPositions[0]
+          const last = closedPositions[closedPositions.length - 1]
+          // Only add closing point if not already closed
+          if (first[0] !== last[0] || first[1] !== last[1]) {
+            closedPositions.push([first[0], first[1]])
+          }
         }
+        
+        // Call onEdit with CLOSED polygon coordinates
+        if (onEdit) {
+          onEdit(id, closedPositions)
+        }
+        
+        // Set dragging to false after a delay to allow the save to complete
+        // This prevents the component from resetting if the query refetches quickly
+        setTimeout(() => {
+          isDraggingRef.current = false
+        }, 500) // 500ms delay should be enough for the save to complete
       })
 
       marker.addTo(map)
@@ -124,6 +146,7 @@ export function SimpleEditablePolygon({
     })
 
     markersRef.current = vertexMarkers
+    isInitializedRef.current = true
 
     // Cleanup
     return () => {
@@ -137,8 +160,50 @@ export function SimpleEditablePolygon({
           // Already removed
         }
       })
+      isInitializedRef.current = false
     }
   }, [map, id, color, fillColor, tooltip, onEdit])
+
+  // Update positions only when not dragging
+  useEffect(() => {
+    if (!isInitializedRef.current) return
+    if (isDraggingRef.current) return
+    
+    // Check if positions changed
+    const hasChanged = positions.length !== currentPositionsRef.current.length ||
+      positions.some((pos, i) => {
+        const current = currentPositionsRef.current[i]
+        if (!current) return true
+        const threshold = 0.00001
+        return Math.abs(pos[0] - current[0]) > threshold || Math.abs(pos[1] - current[1]) > threshold
+      })
+    
+    if (hasChanged) {
+      currentPositionsRef.current = [...positions]
+      
+      // Update polygon
+      if (polygonRef.current) {
+        const closedPositions = [...positions]
+        const first = closedPositions[0]
+        const last = closedPositions[closedPositions.length - 1]
+        if (first[0] !== last[0] || first[1] !== last[1]) {
+          closedPositions.push([first[0], first[1]])
+        }
+        polygonRef.current.setLatLngs(closedPositions)
+      }
+      
+      // Update markers
+      markersRef.current.forEach((marker, index) => {
+        if (index < positions.length) {
+          marker.setLatLng(positions[index])
+        }
+      })
+      
+      if (hasLocalEditsRef.current) {
+        hasLocalEditsRef.current = false
+      }
+    }
+  }, [positions])
 
   return null
 }

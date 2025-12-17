@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, useRef } from 'react'
 import type { ReactNode } from 'react'
-import { AlertTriangle, Download, Edit3, Pencil, Plus, RefreshCw, Target, Trash2 } from 'lucide-react'
+import { AlertTriangle, ChevronDown, ChevronRight, Download, Edit3, Pencil, Plus, RefreshCw, Target, Trash2 } from 'lucide-react'
 import { InteractiveMap, type MapPolygon } from '../../components/InteractiveMap'
 import { DrawableMap } from '../../components/DrawableMap'
 import { FilterPanel } from '../../components/FilterPanel'
@@ -78,11 +78,13 @@ export function ZoningWorkspacePage() {
   const [activeFilters, setActiveFilters] = useState<Record<string, string>>({})
   const [selectedZone, setSelectedZone] = useState<string>('')  // Filter by generated zone
   const [editMode, setEditMode] = useState(false)  // Enable editing for all zones
+  const [editedZoneGeometries, setEditedZoneGeometries] = useState<Record<string, Array<[number, number]>>>({})  // Store edited geometries as object (React-trackable)
   const [selectedUnassignedCustomer, setSelectedUnassignedCustomer] = useState<string>('')  // Selected customer from unassigned pool
   const [selectedZoneCustomer, setSelectedZoneCustomer] = useState<string>('')  // Selected customer from zone dropdown
   const [showTransferModal, setShowTransferModal] = useState(false)  // Show transfer modal
   const [customerToTransfer, setCustomerToTransfer] = useState<string>('')  // Customer ID to transfer
   const [selectedZonesForAction, setSelectedZonesForAction] = useState<Set<string>>(new Set())  // Zones selected for delete/regenerate
+  const [showTransfersSection, setShowTransfersSection] = useState(false)  // Collapsible transfers section
 
   const { mutateAsync: generateZones, isPending, isError } = useGenerateZones()
   const { mutateAsync: updateZoneGeometry } = useUpdateZoneGeometry()
@@ -92,7 +94,7 @@ export function ZoningWorkspacePage() {
   const { data: cityCatalog } = useCustomerCities()
   
   // Fetch zones from database when city changes and no result exists
-  const { data: dbZones } = useZonesFromDatabase(
+  const { data: dbZones, refetch: refetchDbZones } = useZonesFromDatabase(
     city && city !== ALL_CITIES_VALUE ? city : undefined,
     undefined // Don't filter by method - show all zones for the city
   )
@@ -146,14 +148,22 @@ export function ZoningWorkspacePage() {
   const effectiveResult = useMemo(() => {
     // Prefer result from generation, otherwise use zones from database
     const effective = result || dbZones
-    if (dbZones && !result) {
+    
+    // Log which source is being used
+    if (result) {
+      console.log('🗺️ Using result from generation (not database)')
+    } else if (dbZones) {
       const metadata = dbZones.metadata as { map_overlays?: { polygons?: Array<unknown> } } | undefined
       console.log('🗺️ Using zones from database:', {
         polygonCount: metadata?.map_overlays?.polygons?.length ?? 0,
         city: dbZones.city,
         method: dbZones.method,
+        source: dbZones.metadata?.source || 'unknown',
       })
+    } else {
+      console.log('🗺️ No zones available (no result, no dbZones)')
     }
+    
     return effective
   }, [result, dbZones])
   
@@ -167,18 +177,31 @@ export function ZoningWorkspacePage() {
 
   const mapOverlayPolygons = useMemo(() => {
     if (!effectiveResult?.metadata) {
+      console.log('🗺️ mapOverlayPolygons: No effectiveResult metadata')
       return []
     }
     
     const metadata = effectiveResult.metadata as { map_overlays?: { polygons?: Array<Record<string, unknown>> } } | undefined
-    return (metadata?.map_overlays?.polygons ?? []) as Array<{
+    const polygons = (metadata?.map_overlays?.polygons ?? []) as Array<{
       zone_id: string
       coordinates: Array<[number, number]>
       centroid?: [number, number]
       source?: string
       customer_count?: number
     }>
-  }, [effectiveResult])
+    
+    // Log when polygons change to help diagnose
+    console.log('🗺️ mapOverlayPolygons updated:', {
+      count: polygons.length,
+      zoneIds: polygons.map(p => p.zone_id),
+      source: effectiveResult.metadata?.source || 'unknown',
+      usingResult: !!result,
+      usingDbZones: !!dbZones && !result,
+      firstZoneCoords: polygons[0]?.coordinates?.length ?? 0,
+    })
+    
+    return polygons
+  }, [effectiveResult, result, dbZones])
 
   const zoneColorMap = useMemo(() => {
     const zoneSet = new Set<string>()
@@ -378,6 +401,7 @@ export function ZoningWorkspacePage() {
       })
   }, [mapOverlayPolygons, zoneColorMap, selectedZone])
 
+
   const handleRun = useCallback(async () => {
     setLastError(null)
     if (!city) {
@@ -489,7 +513,60 @@ export function ZoningWorkspacePage() {
         <div className="flex items-center gap-2">
           <button
             type="button"
-            onClick={() => setEditMode(!editMode)}
+            onClick={() => {
+              const editedCount = Object.keys(editedZoneGeometries).length
+              if (editMode && editedCount > 0) {
+                const shouldSave = window.confirm(`You have ${editedCount} unsaved change(s). Do you want to save before exiting?`)
+                if (shouldSave) {
+                  // Save all changes
+                  setLastError(null)
+                  const zoneEntries = Object.entries(editedZoneGeometries)
+                  const savePromises = zoneEntries.map(async ([zoneId, coordinates]) => {
+                    try {
+                      await updateZoneGeometry({
+                        zone_id: zoneId,
+                        coordinates: coordinates,
+                      })
+                      return { success: true, zoneId }
+                    } catch (error) {
+                      console.error(`❌ Failed to update zone ${zoneId}:`, error)
+                      return { success: false, zoneId, error: String(error) }
+                    }
+                  })
+                  
+                  Promise.all(savePromises).then(async (results) => {
+                    const failed = results.filter(r => !r.success)
+                    if (failed.length > 0) {
+                      setLastError(`Failed to save ${failed.length} zone(s). Please try again.`)
+                    } else {
+                      setEditedZoneGeometries({})
+                      // CRITICAL FIX: Clear result state so effectiveResult uses updated dbZones
+                      // After saving, we want to show the database version, not the old result
+                      if (result) {
+                        console.log('🔄 Clearing result state to use updated database zones')
+                        setResult(null)
+                      }
+                      
+                      // Force explicit refetch
+                      setTimeout(async () => {
+                        try {
+                          await refetchDbZones()
+                          console.log('📦 Refetched zones after save on exit')
+                        } catch (error) {
+                          console.error('❌ Error refetching zones:', error)
+                        }
+                      }, 1000)
+                      
+                      setEditMode(false)
+                    }
+                  })
+                  return
+                } else {
+                  setEditedZoneGeometries({})
+                }
+              }
+              setEditMode(!editMode)
+            }}
             className={`inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-semibold transition ${
               editMode
                 ? 'border-primary bg-primary text-white hover:bg-primary/90'
@@ -1021,25 +1098,39 @@ export function ZoningWorkspacePage() {
 
           <SummaryTable rows={summaryRows} hasResult={Boolean(result)} />
 
+          {/* Collapsible Transfers Section */}
           <div className="space-y-2">
-            <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100">Transfers</h3>
-            {transfers.length ? (
-              <ul className="space-y-1 text-sm text-gray-600 dark:text-gray-300">
-                {transfers.map((transfer) => (
-                  <li key={transfer.customer + '-' + transfer.toZone} className="rounded-md border border-gray-200 bg-white/80 px-3 py-2 dark:border-gray-700 dark:bg-gray-900/60">
-                    <span className="font-semibold text-gray-800 dark:text-gray-100">{transfer.customer}</span>
-                    {' moved from '}
-                    <span className="font-semibold text-gray-800 dark:text-gray-100">{transfer.fromZone}</span>
-                    {' to '}
-                    <span className="font-semibold text-gray-800 dark:text-gray-100">{transfer.toZone}</span>
-                    {' - ' + transfer.distance}
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className="rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-500 dark:border-gray-700 dark:bg-gray-900/60 dark:text-gray-300">
-                No balancing transfers recorded for the latest run.
-              </p>
+            <button
+              type="button"
+              onClick={() => setShowTransfersSection(!showTransfersSection)}
+              className="flex w-full items-center gap-2 text-sm font-semibold text-gray-800 hover:text-gray-600 dark:text-gray-100 dark:hover:text-gray-300"
+            >
+              {showTransfersSection ? (
+                <ChevronDown className="h-4 w-4" />
+              ) : (
+                <ChevronRight className="h-4 w-4" />
+              )}
+              Transfers {transfers.length > 0 && <span className="text-xs font-normal text-gray-500">({transfers.length})</span>}
+            </button>
+            {showTransfersSection && (
+              transfers.length ? (
+                <ul className="space-y-1 text-sm text-gray-600 dark:text-gray-300">
+                  {transfers.map((transfer) => (
+                    <li key={transfer.customer + '-' + transfer.toZone} className="rounded-md border border-gray-200 bg-white/80 px-3 py-2 dark:border-gray-700 dark:bg-gray-900/60">
+                      <span className="font-semibold text-gray-800 dark:text-gray-100">{transfer.customer}</span>
+                      {' moved from '}
+                      <span className="font-semibold text-gray-800 dark:text-gray-100">{transfer.fromZone}</span>
+                      {' to '}
+                      <span className="font-semibold text-gray-800 dark:text-gray-100">{transfer.toZone}</span>
+                      {' - ' + transfer.distance}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-500 dark:border-gray-700 dark:bg-gray-900/60 dark:text-gray-300">
+                  No balancing transfers recorded for the latest run.
+                </p>
+              )
             )}
           </div>
 
@@ -1047,20 +1138,20 @@ export function ZoningWorkspacePage() {
             <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100">Downloads</h3>
             <div className="flex flex-wrap gap-2">
               <DownloadButton
-                disabled={!result}
+                disabled={!effectiveResult}
                 onClick={() => {
-                  if (result) {
-                    downloadJson(result, 'zones_' + result.method + '_' + city + '.json')
+                  if (effectiveResult) {
+                    downloadJson(effectiveResult, 'zones_' + (effectiveResult.method || 'zones') + '_' + city + '.json')
                   }
                 }}
               >
                 Summary (JSON)
               </DownloadButton>
               <DownloadButton
-                disabled={!result}
+                disabled={!effectiveResult}
                 onClick={() => {
-                  if (result) {
-                    downloadCsv(buildAssignmentsCsv(result), 'zone_assignments_' + city + '.csv')
+                  if (effectiveResult) {
+                    downloadCsv(buildAssignmentsCsv(effectiveResult), 'zone_assignments_' + city + '.csv')
                   }
                 }}
               >
@@ -1077,11 +1168,11 @@ export function ZoningWorkspacePage() {
                 Transfers (CSV)
               </DownloadButton>
               <DownloadButton
-                disabled={!result}
+                disabled={!effectiveResult || !polygonOverlays.length}
                 onClick={() => {
-                  if (result && polygonOverlays.length > 0) {
-                    const geojson = buildGeoJSON(polygonOverlays, result, city, result.method)
-                    downloadJson(geojson, 'zones_' + result.method + '_' + city + '.geojson')
+                  if (effectiveResult && polygonOverlays.length > 0) {
+                    const geojson = buildGeoJSON(polygonOverlays, effectiveResult, city, effectiveResult.method || 'zones')
+                    downloadJson(geojson, 'zones_' + (effectiveResult.method || 'zones') + '_' + city + '.geojson')
                   }
                 }}
               >
@@ -1224,31 +1315,78 @@ export function ZoningWorkspacePage() {
               className="h-[calc(100vh-12rem)]"
             />
           ) : editMode ? (
-            <InteractiveMap
-              center={mapViewport.center}
-              zoom={mapViewport.zoom}
-              caption={`${mapCaption} - Edit Mode: Drag the blue circles at polygon corners to reshape zones. Changes are saved automatically.`}
-              markers={zoneMarkers}
-              polygons={polygonOverlays}
-              editable={true}
-              onPolygonEdit={async (polygonId, coordinates) => {
-                // Extract zone_id from polygon id (format: "zone_id-polygon")
-                const zoneId = polygonId.replace('-polygon', '')
-                
-                try {
-                  await updateZoneGeometry({
-                    zone_id: zoneId,
-                    coordinates: coordinates as Array<[number, number]>,
-                  })
-                  console.log(`✅ Zone ${zoneId} geometry updated successfully`)
-                  setLastError(null)
-                } catch (error) {
-                  console.error(`❌ Failed to update zone ${zoneId}:`, error)
-                  setLastError(`Failed to update zone ${zoneId}. Please try again.`)
-                }
-              }}
-              className="h-[calc(100vh-12rem)]"
-            />
+            <>
+              <InteractiveMap
+                center={mapViewport.center}
+                zoom={mapViewport.zoom}
+                caption={`${mapCaption} - Edit Mode: Drag the blue circles at polygon corners to reshape zones. Click "Save Changes" when done.`}
+                markers={zoneMarkers}
+                polygons={polygonOverlays.map(polygon => {
+                  // Use edited geometry if available, otherwise use original
+                  const zoneId = polygon.id.replace('-polygon', '')
+                  const editedCoords = editedZoneGeometries[zoneId]
+                  return editedCoords ? { ...polygon, positions: editedCoords } : polygon
+                })}
+                editable={true}
+                onPolygonEdit={(polygonId, coordinates) => {
+                  // Extract zone_id from polygon id (format: "zone_id-polygon")
+                  const zoneId = polygonId.replace('-polygon', '')
+                  // Store edited coordinates locally (don't save to DB yet)
+                  // Note: coordinates from SimpleEditablePolygon are already closed
+                  setEditedZoneGeometries(prev => ({
+                    ...prev,
+                    [zoneId]: coordinates as Array<[number, number]>
+                  }))
+                }}
+                className="h-[calc(100vh-12rem)]"
+              />
+              {Object.keys(editedZoneGeometries).length > 0 && (
+                <div className="mt-2 flex items-center justify-between rounded-lg border border-blue-200 bg-blue-50 px-4 py-2 dark:border-blue-800 dark:bg-blue-900/30">
+                  <p className="text-sm font-medium text-blue-800 dark:text-blue-200">
+                    {Object.keys(editedZoneGeometries).length} zone{Object.keys(editedZoneGeometries).length !== 1 ? 's' : ''} modified. Click "Save Changes" to save to database.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      setLastError(null)
+                      try {
+                        const zoneEntries = Object.entries(editedZoneGeometries)
+                        console.log(`💾 Saving ${zoneEntries.length} zone(s)...`)
+                        
+                        await Promise.all(
+                          zoneEntries.map(async ([zoneId, coordinates]) => {
+                            // Ensure OPEN polygon (remove duplicate closing point if present)
+                            const openCoordinates =
+                              coordinates.length > 1 &&
+                              coordinates[0][0] === coordinates.at(-1)![0] &&
+                              coordinates[0][1] === coordinates.at(-1)![1]
+                                ? coordinates.slice(0, -1)
+                                : coordinates
+                            
+                            await updateZoneGeometry({
+                              zone_id: zoneId,
+                              coordinates: openCoordinates,
+                            })
+                          })
+                        )
+                        
+                        // Clear local state and refresh from database
+                        setEditedZoneGeometries({})
+                        setResult(null)
+                        await refetchDbZones()
+                        
+                      } catch (error) {
+                        console.error('❌ Failed to save zone edits:', error)
+                        setLastError('Failed to save zone changes. Please try again.')
+                      }
+                    }}
+                    className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Save Changes
+                  </button>
+                </div>
+              )}
+            </>
           ) : (
             <InteractiveMap
               center={mapViewport.center}
