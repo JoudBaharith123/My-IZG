@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Sequence
 
 from shapely.geometry import MultiPoint, Polygon, Point
@@ -10,10 +11,12 @@ from shapely.ops import unary_union
 from ...data.customers_repository import get_customers_for_location, resolve_depot
 from ...persistence.filesystem import FileStorage
 from ...persistence.database import save_zones_to_database
+from ...services.routing.osrm_client import OSRMClient, build_coordinate_list
+from ...config import settings
 from ..balancing.service import balance_assignments
 from ..outputs.formatter import zoning_response_to_csv, zoning_response_to_json
 from ..export.geojson import export_zones_to_easyterritory, save_easyterritory_json
-from ...models.domain import Customer
+from ...models.domain import Customer, Depot
 from ...schemas.zoning import ZoningRequest, ZoningResponse, ZoneCount
 from .dispatcher import get_strategy
 
@@ -36,6 +39,102 @@ def _ensure_customers(city: str) -> Sequence[Customer]:
             f"Please make sure you have uploaded customer data for this city."
         )
     return customers
+
+
+def _compute_customer_durations_distances(
+    depot: Depot,
+    customers: Sequence[Customer],
+) -> dict[str, dict[str, float]]:
+    """Compute travel duration and distance from depot to each customer using OSRM.
+    
+    Args:
+        depot: Depot location
+        customers: List of customers
+        
+    Returns:
+        Dictionary mapping customer_id to {"duration_min": float, "distance_km": float}
+    """
+    result: dict[str, dict[str, float]] = {}
+    
+    if not customers:
+        return result
+    
+    # Try to use OSRM if available
+    if settings.osrm_base_url:
+        try:
+            osrm_client = OSRMClient()
+            coordinates = [(customer.latitude, customer.longitude) for customer in customers]
+            coordinate_list = build_coordinate_list(depot.latitude, depot.longitude, coordinates)
+            
+            # Get distance/duration matrix from OSRM
+            osrm_table = osrm_client.table(coordinate_list)
+            
+            durations = osrm_table.get("durations", [])
+            distances = osrm_table.get("distances", [])
+            
+            if durations and distances and len(durations) > 0:
+                # First row (index 0) contains distances/durations from depot (index 0) to all locations
+                # Depot is at index 0, customers are at indices 1, 2, 3, ...
+                depot_durations = durations[0] if len(durations) > 0 else []
+                depot_distances = distances[0] if len(distances) > 0 else []
+                
+                for i, customer in enumerate(customers):
+                    # Customer index in the coordinate list is i + 1 (depot is at 0)
+                    customer_index = i + 1
+                    
+                    if customer_index < len(depot_durations) and customer_index < len(depot_distances):
+                        duration_seconds = depot_durations[customer_index]
+                        distance_meters = depot_distances[customer_index]
+                        
+                        if duration_seconds is not None and distance_meters is not None:
+                            result[customer.customer_id] = {
+                                "duration_min": duration_seconds / 60.0,
+                                "distance_km": distance_meters / 1000.0,
+                            }
+                        else:
+                            # Fallback to haversine if OSRM returned None
+                            from ..geospatial import haversine_km
+                            distance_km = haversine_km(
+                                depot.latitude, depot.longitude,
+                                customer.latitude, customer.longitude
+                            )
+                            result[customer.customer_id] = {
+                                "duration_min": (distance_km / 40.0) * 60.0,  # Assume 40 km/h average
+                                "distance_km": distance_km,
+                            }
+                    else:
+                        # Fallback to haversine if index out of range
+                        from ..geospatial import haversine_km
+                        distance_km = haversine_km(
+                            depot.latitude, depot.longitude,
+                            customer.latitude, customer.longitude
+                        )
+                        result[customer.customer_id] = {
+                            "duration_min": (distance_km / 40.0) * 60.0,
+                            "distance_km": distance_km,
+                        }
+            
+            logging.info(f"Computed duration/distance for {len(result)} customers using OSRM")
+        except Exception as e:
+            logging.warning(f"Failed to compute durations/distances using OSRM: {e}. Using haversine fallback.")
+            # Fall through to haversine fallback
+    
+    # Fallback to haversine distance if OSRM not available or failed
+    if not result:
+        from ..geospatial import haversine_km
+        for customer in customers:
+            if customer.customer_id not in result:
+                distance_km = haversine_km(
+                    depot.latitude, depot.longitude,
+                    customer.latitude, customer.longitude
+                )
+                result[customer.customer_id] = {
+                    "duration_min": (distance_km / 40.0) * 60.0,  # Assume 40 km/h average speed
+                    "distance_km": distance_km,
+                }
+        logging.info(f"Computed duration/distance for {len(result)} customers using haversine fallback")
+    
+    return result
 
 
 def process_zoning_request(payload: ZoningRequest, *, persist: bool = True) -> ZoningResponse:
@@ -64,6 +163,36 @@ def process_zoning_request(payload: ZoningRequest, *, persist: bool = True) -> Z
         ]
 
     result = strategy.generate(**strategy_kwargs)
+    
+    # Compute duration and distance for all customers from depot
+    logging.info(f"Computing travel durations and distances for {len(customers)} customers...")
+    customer_travel_data = _compute_customer_durations_distances(depot, customers)
+    
+    # Store travel data in metadata
+    if customer_travel_data:
+        result.metadata.setdefault("customer_travel_data", customer_travel_data)
+        # Also compute zone-level statistics
+        zone_stats: dict[str, dict[str, float]] = {}
+        for zone_id in result.counts().keys():
+            zone_customers = [c for c in customers if result.assignments.get(c.customer_id) == zone_id]
+            if zone_customers:
+                zone_durations = [
+                    customer_travel_data.get(c.customer_id, {}).get("duration_min", 0)
+                    for c in zone_customers
+                ]
+                zone_distances = [
+                    customer_travel_data.get(c.customer_id, {}).get("distance_km", 0)
+                    for c in zone_customers
+                ]
+                zone_stats[zone_id] = {
+                    "avg_duration_min": sum(zone_durations) / len(zone_durations) if zone_durations else 0,
+                    "max_duration_min": max(zone_durations) if zone_durations else 0,
+                    "avg_distance_km": sum(zone_distances) / len(zone_distances) if zone_distances else 0,
+                    "max_distance_km": max(zone_distances) if zone_distances else 0,
+                }
+        if zone_stats:
+            result.metadata["zone_travel_stats"] = zone_stats
+        logging.info(f"Computed travel data for {len(customer_travel_data)} customers and {len(zone_stats)} zones")
 
     if payload.balance:
         balanced = balance_assignments(

@@ -131,6 +131,23 @@ def save_zones_to_database(
                 if "target_zones" in response_metadata:
                     metadata["target_zones"] = response_metadata["target_zones"]
                 
+                # Include travel data for customers in this zone
+                customer_travel_data = response_metadata.get("customer_travel_data", {})
+                if customer_travel_data and zone_assignments:
+                    # Store travel data only for customers in this zone
+                    zone_travel_data = {
+                        customer_id: customer_travel_data.get(customer_id, {})
+                        for customer_id in zone_assignments.keys()
+                        if customer_id in customer_travel_data
+                    }
+                    if zone_travel_data:
+                        metadata["customer_travel_data"] = zone_travel_data
+                
+                # Include zone-level travel statistics
+                zone_travel_stats = response_metadata.get("zone_travel_stats", {})
+                if zone_travel_stats and zone_id in zone_travel_stats:
+                    metadata["travel_stats"] = zone_travel_stats[zone_id]
+                
                 zones_to_insert.append({
                     "name": zone_id,
                     "geometry_wkt": geometry_wkt,  # Use geometry_wkt column (converted by trigger)
@@ -1028,4 +1045,268 @@ def get_customers_for_zone(zone_id: str) -> tuple[Customer, ...]:
         import logging
         logging.warning(f"Failed to retrieve customers for zone {zone_id} from database: {e}")
         return tuple()
+
+
+def save_routes_to_database(
+    routes_response: dict[str, Any],
+    zone_id: str,
+    city: str,
+) -> None:
+    """Save generated routes to Supabase database.
+    
+    Args:
+        routes_response: Route optimization response with plans and metadata
+        zone_id: Zone ID (zone name) that these routes belong to
+        city: City name for the routes
+    """
+    supabase = get_supabase_client()
+    if not supabase:
+        # Database not configured, skip silently
+        import logging
+        logging.info("Supabase not configured - routes will only be saved to files")
+        return
+    
+    try:
+        import logging
+        from datetime import datetime, date
+        
+        # First, find the zone UUID in the database
+        zone_response = supabase.table("zones").select("id").eq("name", zone_id).order("created_at", desc=True).limit(1).execute()
+        
+        if not zone_response.data or len(zone_response.data) == 0:
+            logging.warning(f"Zone '{zone_id}' not found in database - cannot save routes")
+            return
+        
+        zone_uuid = zone_response.data[0]["id"]
+        
+        # Get route plans from response
+        plans = routes_response.get("plans", [])
+        if not plans:
+            logging.info(f"No routes to save for zone '{zone_id}'")
+            return
+        
+        # Get metadata
+        metadata = routes_response.get("metadata", {})
+        
+        # Prepare routes for database insertion
+        routes_to_insert = []
+        for plan in plans:
+            # Convert stops to JSONB format
+            stops_json = []
+            for stop in plan.get("stops", []):
+                stops_json.append({
+                    "customer_id": stop.get("customer_id"),
+                    "sequence": stop.get("sequence"),
+                    "arrival_min": stop.get("arrival_min"),
+                    "distance_from_prev_km": stop.get("distance_from_prev_km"),
+                })
+            
+            # Parse route_date from day (e.g., "MON", "TUE") or use today's date
+            # For now, we'll use today's date. In the future, you might want to map days to actual dates
+            route_date = date.today()
+            
+            # Extract route_id and day
+            route_id = plan.get("route_id", "")
+            day = plan.get("day", "")
+            
+            routes_to_insert.append({
+                "zone_id": zone_uuid,
+                "route_date": route_date.isoformat(),
+                "stops": stops_json,  # Array of stops in JSONB format
+                "total_distance_km": plan.get("total_distance_km"),
+                "total_duration_min": plan.get("total_duration_min"),
+                "vehicle_id": route_id,  # Use route_id as vehicle_id
+                "driver_id": None,  # Can be set later
+                "status": "planned",
+            })
+            
+            # Log route metadata for reference (can be stored in a metadata column if added later)
+            logging.debug(f"Route {route_id} (day: {day}, customers: {plan.get('customer_count', 0)})")
+        
+        # Insert routes into database
+        if routes_to_insert:
+            logging.info(f"Attempting to save {len(routes_to_insert)} routes to database for zone '{zone_id}'")
+            
+            # Delete existing routes for this zone to avoid duplicates
+            # (You might want to keep historical routes - adjust this logic as needed)
+            try:
+                existing_routes = supabase.table("routes").select("id").eq("zone_id", zone_uuid).execute()
+                if existing_routes.data:
+                    existing_ids = [r["id"] for r in existing_routes.data]
+                    if existing_ids:
+                        logging.info(f"Deleting {len(existing_ids)} existing routes for zone '{zone_id}'")
+                        # Delete in batches
+                        batch_size = 100
+                        for i in range(0, len(existing_ids), batch_size):
+                            batch = existing_ids[i:i + batch_size]
+                            supabase.table("routes").delete().in_("id", batch).execute()
+            except Exception as delete_error:
+                logging.warning(f"Failed to delete existing routes: {delete_error}")
+            
+            # Insert new routes
+            inserted_count = 0
+            failed_count = 0
+            
+            for route_data in routes_to_insert:
+                try:
+                    supabase.table("routes").insert(route_data).execute()
+                    inserted_count += 1
+                except Exception as e:
+                    failed_count += 1
+                    logging.error(f"Failed to insert route {route_data.get('vehicle_id')}: {e}")
+                    continue
+            
+            if inserted_count > 0:
+                logging.info(f"✓ Successfully inserted {inserted_count} out of {len(routes_to_insert)} routes to database")
+            if failed_count > 0:
+                logging.error(f"❌ Failed to insert {failed_count} routes. Check database configuration and schema.")
+                    
+    except Exception as e:
+        # Log error but don't fail the entire request
+        import logging
+        logging.warning(f"Failed to save routes to database: {e}")
+
+
+def remove_customer_from_route(zone_id: str, route_id: str, customer_id: str) -> bool:
+    """Remove a customer from a route.
+    
+    Args:
+        zone_id: Zone ID (zone name)
+        route_id: Route ID (vehicle_id)
+        customer_id: Customer ID to remove
+        
+    Returns:
+        True if successful, False if customer not found in route
+    """
+    supabase = get_supabase_client()
+    if not supabase:
+        import logging
+        logging.warning("Supabase not configured - cannot remove customer from route")
+        return False
+    
+    try:
+        import logging
+        
+        # Find the zone UUID
+        zone_response = supabase.table("zones").select("id").eq("name", zone_id).order("created_at", desc=True).limit(1).execute()
+        if not zone_response.data:
+            logging.warning(f"Zone '{zone_id}' not found")
+            return False
+        
+        zone_uuid = zone_response.data[0]["id"]
+        
+        # Find the route
+        route_response = supabase.table("routes").select("id, stops").eq("zone_id", zone_uuid).eq("vehicle_id", route_id).limit(1).execute()
+        if not route_response.data:
+            logging.warning(f"Route '{route_id}' not found for zone '{zone_id}'")
+            return False
+        
+        route = route_response.data[0]
+        route_uuid = route["id"]
+        stops = route.get("stops", [])
+        
+        # Find and remove the customer
+        original_count = len(stops)
+        stops = [stop for stop in stops if stop.get("customer_id") != customer_id]
+        
+        if len(stops) == original_count:
+            # Customer not found in route
+            return False
+        
+        # Update the route with new stops
+        supabase.table("routes").update({"stops": stops}).eq("id", route_uuid).execute()
+        
+        # Recalculate total distance and duration (simplified - in production, you'd want to recalculate from OSRM)
+        # For now, we'll just update the stops
+        
+        logging.info(f"Removed customer {customer_id} from route {route_id}")
+        return True
+        
+    except Exception as e:
+        import logging
+        logging.error(f"Failed to remove customer from route: {e}")
+        return False
+
+
+def update_route_customer(zone_id: str, from_route_id: str, to_route_id: str, customer_id: str) -> bool:
+    """Transfer a customer from one route to another.
+    
+    Args:
+        zone_id: Zone ID (zone name)
+        from_route_id: Source route ID (vehicle_id)
+        to_route_id: Destination route ID (vehicle_id)
+        customer_id: Customer ID to transfer
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    supabase = get_supabase_client()
+    if not supabase:
+        import logging
+        logging.warning("Supabase not configured - cannot transfer customer")
+        return False
+    
+    try:
+        import logging
+        
+        # Find the zone UUID
+        zone_response = supabase.table("zones").select("id").eq("name", zone_id).order("created_at", desc=True).limit(1).execute()
+        if not zone_response.data:
+            logging.warning(f"Zone '{zone_id}' not found")
+            return False
+        
+        zone_uuid = zone_response.data[0]["id"]
+        
+        # Find both routes
+        routes_response = supabase.table("routes").select("id, vehicle_id, stops").eq("zone_id", zone_uuid).in_("vehicle_id", [from_route_id, to_route_id]).execute()
+        
+        if not routes_response.data or len(routes_response.data) < 2:
+            logging.warning(f"One or both routes not found: {from_route_id}, {to_route_id}")
+            return False
+        
+        from_route = None
+        to_route = None
+        for route in routes_response.data:
+            if route["vehicle_id"] == from_route_id:
+                from_route = route
+            elif route["vehicle_id"] == to_route_id:
+                to_route = route
+        
+        if not from_route or not to_route:
+            logging.warning(f"Could not find both routes: {from_route_id}, {to_route_id}")
+            return False
+        
+        # Find customer in source route
+        from_stops = from_route.get("stops", [])
+        customer_stop = None
+        for stop in from_stops:
+            if stop.get("customer_id") == customer_id:
+                customer_stop = stop
+                break
+        
+        if not customer_stop:
+            logging.warning(f"Customer {customer_id} not found in route {from_route_id}")
+            return False
+        
+        # Remove from source route
+        from_stops = [stop for stop in from_stops if stop.get("customer_id") != customer_id]
+        
+        # Add to destination route (append at end, sequence will be updated later if needed)
+        to_stops = to_route.get("stops", [])
+        # Update sequence to be last
+        max_sequence = max([stop.get("sequence", 0) for stop in to_stops], default=0)
+        customer_stop["sequence"] = max_sequence + 1
+        to_stops.append(customer_stop)
+        
+        # Update both routes
+        supabase.table("routes").update({"stops": from_stops}).eq("id", from_route["id"]).execute()
+        supabase.table("routes").update({"stops": to_stops}).eq("id", to_route["id"]).execute()
+        
+        logging.info(f"Transferred customer {customer_id} from {from_route_id} to {to_route_id}")
+        return True
+        
+    except Exception as e:
+        import logging
+        logging.error(f"Failed to transfer customer: {e}")
+        return False
 

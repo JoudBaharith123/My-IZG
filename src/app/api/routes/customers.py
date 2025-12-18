@@ -68,6 +68,51 @@ def get_customer_locations(
     effective_page_size = min(page_size, limit) if limit else page_size
     offset = (page - 1) * effective_page_size
 
+    # If zone is provided, try to get customers from database zones first
+    if zone:
+        try:
+            from ...persistence.database import get_customers_for_zone
+            db_customers = get_customers_for_zone(zone)
+            if db_customers:
+                # Convert to location format
+                items = []
+                for customer in db_customers:
+                    # Apply city filter if provided
+                    if city and customer.city and customer.city.lower() != city.lower():
+                        continue
+                    # Apply additional filters
+                    if status and getattr(customer, 'status', None) != status:
+                        continue
+                    if agent_id and getattr(customer, 'agent_id', None) != agent_id:
+                        continue
+                    if agent_name and getattr(customer, 'agent_name', None) != agent_name:
+                        continue
+                    
+                    items.append({
+                        "customer_id": customer.customer_id,
+                        "customer_name": customer.customer_name,
+                        "city": customer.city,
+                        "zone": zone,  # Use the zone from the filter
+                        "latitude": customer.latitude,
+                        "longitude": customer.longitude,
+                    })
+                
+                # Apply pagination
+                total = len(items)
+                paginated_items = items[offset:offset + effective_page_size]
+                has_next_page = (offset + len(paginated_items)) < total
+                
+                return CustomerLocationsResponse(
+                    items=[CustomerLocationModel(**record) for record in paginated_items],
+                    page=page,
+                    page_size=effective_page_size,
+                    total=total,
+                    has_next_page=has_next_page,
+                )
+        except Exception as e:
+            import logging
+            logging.warning(f"Failed to get customers from database zone '{zone}': {e}. Falling back to CSV lookup.")
+
     # Build filters dictionary (using lowercase with underscores for consistency)
     filters = {}
     if status:

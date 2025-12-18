@@ -14,11 +14,22 @@ class RoutingConstraints(BaseModel):
     max_distance_per_route_km: Optional[float] = Field(None, ge=0)
 
 
+class RouteAssignment(BaseModel):
+    """Manual assignment of customers to a specific route."""
+    route_id: str = Field(..., description="Route identifier (e.g., 'Route_1', 'Route_2')")
+    day: str = Field(..., description="Day of week for this route (e.g., 'MON', 'TUE')")
+    customer_ids: List[str] = Field(..., description="List of customer IDs assigned to this route")
+
+
 class RoutingRequest(BaseModel):
     city: str
     zone_id: str
     customer_ids: Optional[List[str]] = None
     constraints: Optional[RoutingConstraints] = None
+    route_assignments: Optional[List[RouteAssignment]] = Field(
+        default=None,
+        description="Pre-assigned routes with customers. If provided, only sequence will be optimized, not assignment."
+    )
     persist: bool = True
     requested_by: Optional[str] = Field(default=None, description="Person or system requesting the run.")
     run_label: Optional[str] = Field(default=None, description="Friendly name for persisted outputs.")

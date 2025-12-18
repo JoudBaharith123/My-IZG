@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
-import { AlertTriangle, Download, MapPin, RefreshCw, Route as RouteIcon } from 'lucide-react'
+import { AlertTriangle, Download, MapPin, RefreshCw, Route as RouteIcon, X, ArrowRight } from 'lucide-react'
 
 import { InteractiveMap, type MapPolyline } from '../../components/InteractiveMap'
 import { CITY_VIEWPORTS, DEFAULT_VIEWPORT } from '../../config/cityViewports'
@@ -9,6 +9,7 @@ import { useCustomerLocations } from '../../hooks/useCustomerLocations'
 import { useOptimizeRoutes, type OptimizeRoutesPayload, type OptimizeRoutesResponse } from '../../hooks/useOptimizeRoutes'
 import { useZoneSummaries, type ZoneSummary } from '../../hooks/useZoneSummaries'
 import { useDatabaseZoneSummaries } from '../../hooks/useDatabaseZoneSummaries'
+import { useRemoveCustomerFromRoute, useTransferCustomer } from '../../hooks/useUpdateRoute'
 import { colorFromString } from '../../utils/color'
 
 type TabKey = 'metrics' | 'sequence' | 'downloads'
@@ -54,23 +55,28 @@ export function RoutingWorkspacePage() {
   const [routeResult, setRouteResult] = useState<OptimizeRoutesResponse | null>(null)
   const [runMeta, setRunMeta] = useState<{ timestamp: string; durationSeconds: number } | null>(null)
   const [lastError, setLastError] = useState<string | null>(null)
+  const [selectedRouteId, setSelectedRouteId] = useState<string>('')
+  const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null)
 
   const { data: customerCities, isLoading: isCitiesLoading } = useCustomerCities()
   
   // Use database zones instead of customer zones (from CSV)
   const { data: zoneSummaries, isLoading: isZonesLoading } = useDatabaseZoneSummaries(selectedCity || undefined)
   const { mutateAsync: optimizeRoutes, isPending: isOptimizing } = useOptimizeRoutes()
+  const { mutateAsync: removeCustomer, isPending: isRemovingCustomer } = useRemoveCustomerFromRoute()
+  const { mutateAsync: transferCustomer, isPending: isTransferringCustomer } = useTransferCustomer()
   const {
     items: zoneCustomerPoints,
     total: zoneCustomerTotal,
     hasNextPage: hasMoreZoneCustomers,
     fetchNextPage: fetchMoreZoneCustomers,
     isFetchingNextPage: isFetchingMoreZoneCustomers,
+    isLoading: isLoadingCustomers,
   } = useCustomerLocations({
     city: selectedCity,
     zone: selectedZone || undefined,
-    pageSize: 1500,
-    enabled: Boolean(selectedCity),
+    pageSize: 5000, // Increased to show more customers like zoning workspace
+    enabled: Boolean(selectedCity), // Show map when city is selected (zone is optional)
   })
 
   const cityOptions = useMemo(() => {
@@ -157,18 +163,25 @@ export function RoutingWorkspacePage() {
   }, [routeResult])
 
   const mapViewport = useMemo(() => {
-    if (!selectedCity) {
-      return DEFAULT_VIEWPORT
+    // Always show map - use city viewport if city selected, otherwise default
+    if (selectedCity) {
+      return CITY_VIEWPORTS[selectedCity] ?? DEFAULT_VIEWPORT
     }
-    return CITY_VIEWPORTS[selectedCity] ?? DEFAULT_VIEWPORT
+    return DEFAULT_VIEWPORT
   }, [selectedCity])
 
   const mapCaption = useMemo(() => {
     if (!selectedCity) {
-      return 'Select a city to preview routes'
+      return 'Select a city to view customers and routes'
     }
-    return `${selectedCity} - ${lastRunLabel}`
-  }, [lastRunLabel, selectedCity])
+    if (!selectedZone) {
+      return `${selectedCity} - Select a zone to view customers`
+    }
+    if (routeResult) {
+      return `${selectedCity} - ${selectedZone} - ${lastRunLabel}`
+    }
+    return `${selectedCity} - ${selectedZone} - ${zoneCustomerPoints.length} customers`
+  }, [lastRunLabel, selectedCity, selectedZone, routeResult, zoneCustomerPoints.length])
 
   const defaultZoneColor = useMemo(() => {
     if (!selectedZone) {
@@ -191,11 +204,24 @@ export function RoutingWorkspacePage() {
     if (!zoneCustomerPoints.length) {
       return []
     }
-    return zoneCustomerPoints.map((customer) => {
+    
+    // Filter by selected route if one is selected AND routes exist
+    const filteredCustomers = selectedRouteId && routeResult?.plans?.length
+      ? zoneCustomerPoints.filter((customer) => {
+          const routeId = routeAssignments.get(customer.customer_id)
+          return routeId === selectedRouteId
+        })
+      : zoneCustomerPoints
+    
+    // Use smaller markers for large datasets (like zoning workspace)
+    const markerRadius = zoneCustomerPoints.length > 2000 ? 3 : zoneCustomerPoints.length > 1000 ? 4 : 6
+    
+    return filteredCustomers.map((customer) => {
+      // If routes exist, use route colors, otherwise use zone colors
       const routeId = routeAssignments.get(customer.customer_id)
-      const markerColor = routeId
+      const markerColor = routeId && routeResult?.plans?.length
         ? routeColorMap[routeId] ?? colorFromString(routeId)
-        : defaultZoneColor
+        : (customer.zone ? colorFromString(customer.zone) : defaultZoneColor)
 
       const labelParts: string[] = []
       if (customer.customer_name) {
@@ -203,22 +229,63 @@ export function RoutingWorkspacePage() {
       }
       labelParts.push(customer.customer_id)
 
-      const detailLabel = routeId ?? customer.zone ?? 'Unassigned'
+      // Show route if assigned, otherwise show zone or city
+      const detailLabel = routeId && routeResult?.plans?.length
+        ? `Route: ${routeId}`
+        : (customer.zone ? `Zone: ${customer.zone}` : (selectedCity ? `City: ${selectedCity}` : 'Unassigned'))
 
       return {
         id: customer.customer_id,
         position: [customer.latitude, customer.longitude] as [number, number],
         color: markerColor,
-        tooltip: `${labelParts.join(' - ')} - ${detailLabel}`,
+        radius: markerRadius,
+        tooltip: `${labelParts.join(' - ')}\n${detailLabel}`,
       }
     })
-  }, [defaultZoneColor, routeAssignments, routeColorMap, zoneCustomerPoints])
-
-  const routePolylines = useMemo<MapPolyline[]>(() => {
-    if (!mapOverlayRoutes.length) {
+  }, [defaultZoneColor, routeAssignments, routeColorMap, zoneCustomerPoints, selectedRouteId, routeResult, selectedCity])
+  
+  // Get route options for dropdown
+  const routeOptions = useMemo(() => {
+    if (!routeResult?.plans?.length) {
       return []
     }
-    return mapOverlayRoutes
+    return routeResult.plans.map((plan) => ({
+      routeId: plan.route_id,
+      label: `${plan.route_id} (${plan.customer_count} customers, ${plan.day})`,
+      customerCount: plan.customer_count,
+    }))
+  }, [routeResult])
+  
+  // Get customers for selected route (from route result)
+  const selectedRouteCustomers = useMemo(() => {
+    if (!selectedRouteId || !routeResult?.plans) {
+      return []
+    }
+    const plan = routeResult.plans.find((p) => p.route_id === selectedRouteId)
+    return plan?.stops || []
+  }, [selectedRouteId, routeResult])
+  
+  // Get all customers for the selected route (from zone customer points)
+  const selectedRouteCustomerPoints = useMemo(() => {
+    if (!selectedRouteId) {
+      return zoneCustomerPoints
+    }
+    return zoneCustomerPoints.filter((customer) => {
+      const routeId = routeAssignments.get(customer.customer_id)
+      return routeId === selectedRouteId
+    })
+  }, [selectedRouteId, zoneCustomerPoints, routeAssignments])
+
+  const routePolylines = useMemo<MapPolyline[]>(() => {
+    if (!mapOverlayRoutes.length || !routeResult?.plans?.length) {
+      return []
+    }
+    // Filter by selected route if one is selected
+    const filteredRoutes = selectedRouteId
+      ? mapOverlayRoutes.filter((route) => route.route_id === selectedRouteId)
+      : mapOverlayRoutes
+    
+    return filteredRoutes
       .filter((route) => route.coordinates.length >= 2)
       .map((route) => {
         const color = routeColorMap[route.route_id] ?? colorFromString(route.route_id)
@@ -230,7 +297,7 @@ export function RoutingWorkspacePage() {
           weight: 4,
         }
       })
-  }, [mapOverlayRoutes, routeColorMap])
+  }, [mapOverlayRoutes, routeColorMap, selectedRouteId, routeResult])
 
   const handleGenerate = useCallback(async () => {
     if (!selectedCity || !selectedZone) {
@@ -238,6 +305,7 @@ export function RoutingWorkspacePage() {
       return
     }
     setLastError(null)
+    setSelectedRouteId('') // Reset route filter
 
     const payload: OptimizeRoutesPayload = {
       city: selectedCity,
@@ -273,6 +341,91 @@ export function RoutingWorkspacePage() {
     selectedCity,
     selectedZone,
   ])
+  
+  const handleRemoveCustomer = useCallback(async (customerId: string, routeId: string) => {
+    if (!selectedZone) {
+      setLastError('No zone selected')
+      return
+    }
+    try {
+      await removeCustomer({
+        zone_id: selectedZone,
+        route_id: routeId,
+        customer_id: customerId,
+      })
+      // Refresh route result by removing customer from local state
+      if (routeResult) {
+        const updatedPlans = routeResult.plans.map((plan) => {
+          if (plan.route_id === routeId) {
+            return {
+              ...plan,
+              stops: plan.stops.filter((stop) => stop.customer_id !== customerId),
+              customer_count: plan.customer_count - 1,
+            }
+          }
+          return plan
+        })
+        setRouteResult({ ...routeResult, plans: updatedPlans })
+      }
+      setSelectedCustomerId(null)
+    } catch (error: unknown) {
+      const message =
+        (error as { response?: { data?: { detail?: string } } }).response?.data?.detail ??
+        (error as Error).message ??
+        'Failed to remove customer'
+      setLastError(message)
+    }
+  }, [selectedZone, removeCustomer, routeResult])
+  
+  const handleTransferCustomer = useCallback(async (customerId: string, fromRouteId: string, toRouteId: string) => {
+    if (!selectedZone) {
+      setLastError('No zone selected')
+      return
+    }
+    try {
+      await transferCustomer({
+        zone_id: selectedZone,
+        from_route_id: fromRouteId,
+        to_route_id: toRouteId,
+        customer_id: customerId,
+      })
+      // Refresh route result by moving customer between routes
+      if (routeResult) {
+        let customerStop: typeof routeResult.plans[0]['stops'][0] | undefined
+        const updatedPlans = routeResult.plans.map((plan) => {
+          if (plan.route_id === fromRouteId) {
+            // Find and remove from source route
+            customerStop = plan.stops.find((stop) => stop.customer_id === customerId)
+            return {
+              ...plan,
+              stops: plan.stops.filter((stop) => stop.customer_id !== customerId),
+              customer_count: plan.customer_count - 1,
+            }
+          }
+          return plan
+        }).map((plan) => {
+          if (plan.route_id === toRouteId && customerStop) {
+            // Add to destination route
+            const maxSequence = Math.max(...plan.stops.map((s) => s.sequence), 0)
+            return {
+              ...plan,
+              stops: [...plan.stops, { ...customerStop, sequence: maxSequence + 1 }],
+              customer_count: plan.customer_count + 1,
+            }
+          }
+          return plan
+        })
+        setRouteResult({ ...routeResult, plans: updatedPlans })
+      }
+      setSelectedCustomerId(null)
+    } catch (error: unknown) {
+      const message =
+        (error as { response?: { data?: { detail?: string } } }).response?.data?.detail ??
+        (error as Error).message ??
+        'Failed to transfer customer'
+      setLastError(message)
+    }
+  }, [selectedZone, transferCustomer, routeResult])
 
   return (
     <div className="flex flex-col gap-6">
@@ -337,6 +490,40 @@ export function RoutingWorkspacePage() {
                   : 'Select a zone to view details'}
               </p>
             </Field>
+            
+            {routeOptions.length > 0 ? (
+              <Field label="Filter by Route">
+                <select
+                  value={selectedRouteId}
+                  onChange={(event) => setSelectedRouteId(event.target.value)}
+                  className={inputClasses}
+                >
+                  <option value="">All routes ({zoneCustomerPoints.length} customers)</option>
+                  {routeOptions.map((route) => (
+                    <option key={route.routeId} value={route.routeId}>
+                      {route.label}
+                    </option>
+                  ))}
+                </select>
+                {selectedRouteId ? (
+                  <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                    Showing {selectedRouteCustomerPoints.length} of {selectedRouteCustomers.length} customers in this route
+                  </p>
+                ) : (
+                  <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                    Showing all {zoneCustomerPoints.length} customers in zone
+                  </p>
+                )}
+              </Field>
+            ) : zoneCustomerPoints.length > 0 ? (
+              <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 text-xs text-gray-600 dark:border-gray-700 dark:bg-gray-800/60 dark:text-gray-300">
+                <p className="font-medium">Zone Customers</p>
+                <p className="mt-1">{zoneCustomerPoints.length.toLocaleString()} customers in this zone</p>
+                <p className="mt-2 text-gray-500 dark:text-gray-400">
+                  Generate routes to assign customers to routes and filter by route.
+                </p>
+              </div>
+            ) : null}
           </section>
 
           <section className="grid gap-4">
@@ -422,22 +609,62 @@ export function RoutingWorkspacePage() {
           </div>
 
           <div className="space-y-2">
-            <InteractiveMap center={mapViewport.center} zoom={mapViewport.zoom} caption={mapCaption} markers={routeMarkers} polylines={routePolylines} />
-            {hasMoreZoneCustomers ? (
-              <div className="flex flex-wrap items-center gap-3 text-xs text-gray-500 dark:text-gray-400">
-                <p>
-                  Displaying {zoneCustomerPoints.length.toLocaleString()} of {zoneCustomerTotal.toLocaleString()} customers in this zone.
-                </p>
-                <button
-                  type="button"
-                  onClick={() => fetchMoreZoneCustomers()}
-                  disabled={isFetchingMoreZoneCustomers}
-                  className="inline-flex items-center rounded-full border border-gray-300 px-3 py-1 font-semibold text-gray-700 transition hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-70 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-800"
-                >
-                  {isFetchingMoreZoneCustomers ? 'Loading…' : 'Load more'}
-                </button>
+            {isLoadingCustomers && selectedCity ? (
+              <div className="flex items-center justify-center rounded-lg border border-gray-200 bg-gray-50 p-8 text-sm text-gray-500 dark:border-gray-700 dark:bg-gray-900/60 dark:text-gray-300">
+                Loading customers...
               </div>
-            ) : null}
+            ) : !selectedCity ? (
+              <div className="relative h-[600px] w-full overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700">
+                <InteractiveMap center={mapViewport.center} zoom={mapViewport.zoom} caption={mapCaption} markers={[]} polylines={[]} />
+                <div className="absolute inset-0 flex items-center justify-center bg-white/80 backdrop-blur-sm dark:bg-gray-900/80">
+                  <div className="text-center">
+                    <p className="text-lg font-semibold text-gray-700 dark:text-gray-200">Select a city to view customers</p>
+                    <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">Choose a city from the dropdown to see customers on the map</p>
+                  </div>
+                </div>
+              </div>
+            ) : zoneCustomerPoints.length === 0 ? (
+              <div className="relative h-[600px] w-full overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700">
+                <InteractiveMap center={mapViewport.center} zoom={mapViewport.zoom} caption={mapCaption} markers={[]} polylines={[]} />
+                <div className="absolute inset-0 flex items-center justify-center bg-white/80 backdrop-blur-sm dark:bg-gray-900/80">
+                  <div className="text-center">
+                    <p className="text-lg font-semibold text-gray-700 dark:text-gray-200">
+                      {selectedZone
+                        ? `No customers found for zone "${selectedZone}"`
+                        : 'Select a zone to view customers'}
+                    </p>
+                    <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
+                      {selectedZone
+                        ? `Make sure the zone has customers assigned in ${selectedCity}`
+                        : `Choose a zone from the dropdown to see customers in ${selectedCity}`}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <>
+                <InteractiveMap center={mapViewport.center} zoom={mapViewport.zoom} caption={mapCaption} markers={routeMarkers} polylines={routePolylines} />
+                {hasMoreZoneCustomers ? (
+                  <div className="flex flex-wrap items-center gap-3 text-xs text-gray-500 dark:text-gray-400">
+                    <p>
+                      Displaying {zoneCustomerPoints.length.toLocaleString()} of {zoneCustomerTotal.toLocaleString()} customers{selectedZone ? ` in zone "${selectedZone}"` : ` in ${selectedCity}`}.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => fetchMoreZoneCustomers()}
+                      disabled={isFetchingMoreZoneCustomers}
+                      className="inline-flex items-center rounded-full border border-gray-300 px-3 py-1 font-semibold text-gray-700 transition hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-70 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-800"
+                    >
+                      {isFetchingMoreZoneCustomers ? 'Loading…' : 'Load more'}
+                    </button>
+                  </div>
+                ) : (
+                  <div className="text-xs text-gray-500 dark:text-gray-400">
+                    Displaying {zoneCustomerPoints.length.toLocaleString()} {zoneCustomerPoints.length === 1 ? 'customer' : 'customers'}{selectedZone ? ` in zone "${selectedZone}"` : ` in ${selectedCity}`}.
+                  </div>
+                )}
+              </>
+            )}
           </div>
 
           <div className="space-y-4 rounded-xl border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-background-dark/80">
@@ -454,7 +681,18 @@ export function RoutingWorkspacePage() {
             </nav>
             <div className="px-4 pb-4">
               {tab === 'metrics' && <RouteMetricsTable rows={metrics} hasResult={Boolean(routeResult)} />}
-              {tab === 'sequence' && <RouteSequenceTable rows={sequence} hasResult={Boolean(routeResult)} />}
+              {tab === 'sequence' && (
+                <RouteSequenceTable 
+                  rows={sequence} 
+                  hasResult={Boolean(routeResult)}
+                  onRemoveCustomer={handleRemoveCustomer}
+                  onTransferCustomer={handleTransferCustomer}
+                  routeOptions={routeOptions}
+                  selectedZone={selectedZone}
+                  isRemoving={isRemovingCustomer}
+                  isTransferring={isTransferringCustomer}
+                />
+              )}
               {tab === 'downloads' && <DownloadsList items={downloadItems} />}
             </div>
           </div>
@@ -539,9 +777,40 @@ function RouteMetricsTable({ rows, hasResult }: { rows: RouteMetricRow[]; hasRes
   )
 }
 
-function RouteSequenceTable({ rows, hasResult }: { rows: RouteSequenceRow[]; hasResult: boolean }) {
+function RouteSequenceTable({ 
+  rows, 
+  hasResult,
+  onRemoveCustomer,
+  onTransferCustomer,
+  routeOptions,
+  selectedZone,
+  isRemoving,
+  isTransferring,
+}: { 
+  rows: RouteSequenceRow[]
+  hasResult: boolean
+  onRemoveCustomer?: (customerId: string, routeId: string) => void
+  onTransferCustomer?: (customerId: string, fromRouteId: string, toRouteId: string) => void
+  routeOptions?: Array<{ routeId: string; label: string }>
+  selectedZone?: string
+  isRemoving?: boolean
+  isTransferring?: boolean
+}) {
+  const [transferringCustomer, setTransferringCustomer] = useState<{ customerId: string; routeId: string } | null>(null)
+  
   if (!rows.length) {
     return <EmptyState message={hasResult ? 'No stops returned for this run.' : 'Generate routes to review stop sequence.'} />
+  }
+
+  const handleTransferClick = (customerId: string, routeId: string) => {
+    setTransferringCustomer({ customerId, routeId })
+  }
+  
+  const handleTransferConfirm = (toRouteId: string) => {
+    if (transferringCustomer && onTransferCustomer) {
+      onTransferCustomer(transferringCustomer.customerId, transferringCustomer.routeId, toRouteId)
+      setTransferringCustomer(null)
+    }
   }
 
   return (
@@ -554,6 +823,7 @@ function RouteSequenceTable({ rows, hasResult }: { rows: RouteSequenceRow[]; has
             <th className="px-4 py-3 text-left">Customer</th>
             <th className="px-4 py-3 text-left">ETA</th>
             <th className="px-4 py-3 text-left">Distance from prev</th>
+            <th className="px-4 py-3 text-left">Actions</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
@@ -564,6 +834,65 @@ function RouteSequenceTable({ rows, hasResult }: { rows: RouteSequenceRow[]; has
               <td className="px-4 py-3 text-gray-600 dark:text-gray-300">{row.customer}</td>
               <td className="px-4 py-3 text-gray-600 dark:text-gray-300">{row.eta}</td>
               <td className="px-4 py-3 text-gray-600 dark:text-gray-300">{row.distance}</td>
+              <td className="px-4 py-3">
+                <div className="flex items-center gap-2">
+                  {transferringCustomer?.customerId === row.customer ? (
+                    <div className="flex items-center gap-2">
+                      <select
+                        className="rounded border border-gray-300 px-2 py-1 text-xs dark:border-gray-600 dark:bg-gray-800"
+                        onChange={(e) => {
+                          if (e.target.value) {
+                            handleTransferConfirm(e.target.value)
+                          }
+                        }}
+                        disabled={isTransferring}
+                      >
+                        <option value="">Select route...</option>
+                        {routeOptions?.filter((r) => r.routeId !== row.routeId).map((route) => (
+                          <option key={route.routeId} value={route.routeId}>
+                            {route.label}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => setTransferringCustomer(null)}
+                        className="text-xs text-gray-500 hover:text-gray-700 dark:text-gray-400"
+                        disabled={isTransferring}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      {onTransferCustomer && routeOptions && routeOptions.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => handleTransferClick(row.customer, row.routeId)}
+                          disabled={isTransferring}
+                          className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs text-primary hover:bg-primary/10 disabled:opacity-50"
+                          title="Transfer to another route"
+                        >
+                          <ArrowRight className="h-3 w-3" />
+                          Transfer
+                        </button>
+                      )}
+                      {onRemoveCustomer && (
+                        <button
+                          type="button"
+                          onClick={() => onRemoveCustomer(row.customer, row.routeId)}
+                          disabled={isRemoving}
+                          className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs text-red-600 hover:bg-red-50 disabled:opacity-50 dark:text-red-400 dark:hover:bg-red-900/20"
+                          title="Remove from route"
+                        >
+                          <X className="h-3 w-3" />
+                          Remove
+                        </button>
+                      )}
+                    </>
+                  )}
+                </div>
+              </td>
             </tr>
           ))}
         </tbody>

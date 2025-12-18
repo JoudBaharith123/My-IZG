@@ -44,6 +44,11 @@ class IsochroneZoning(ZoningStrategy):
         *,
         max_batch_size: int,
     ) -> list[float]:
+        """Compute travel durations in minutes from depot to customers.
+        
+        Note: This method is kept for backward compatibility. The new implementation
+        in service.py computes both duration and distance for all zone types.
+        """
         if not settings.osrm_base_url:
             return self._fallback_haversine_minutes(depot, customers)
 
@@ -52,14 +57,19 @@ class IsochroneZoning(ZoningStrategy):
         # Chunk to respect OSRM table limits.
         for start in range(1, len(coords), max_batch_size):
             chunk = coords[0:1] + coords[start : start + max_batch_size]
-            chunk_durations = self._call_osrm_table(chunk)
+            chunk_durations, _ = self._call_osrm_table(chunk)  # Get durations, ignore distances for now
             durations.extend(chunk_durations)
         return durations
 
-    def _call_osrm_table(self, coords: list[tuple[float, float]]) -> list[float]:
+    def _call_osrm_table(self, coords: list[tuple[float, float]]) -> tuple[list[float], list[float]]:
+        """Call OSRM table endpoint and return both durations and distances.
+        
+        Returns:
+            Tuple of (durations_minutes, distances_km)
+        """
         coordinates = ";".join(f"{lon},{lat}" for lon, lat in coords)
         params = {
-            "annotations": "duration",
+            "annotations": "duration,distance",  # Get both duration and distance
             "sources": "0",
             "destinations": ";".join(str(i) for i in range(1, len(coords))),
         }
@@ -67,8 +77,13 @@ class IsochroneZoning(ZoningStrategy):
         response = self._client.get(url, params=params)
         response.raise_for_status()
         data = response.json()
-        durations_seconds = data["durations"][0]
-        return [value / 60.0 if value is not None else math.inf for value in durations_seconds]
+        durations_seconds = data.get("durations", [[]])[0] if "durations" in data else []
+        distances_meters = data.get("distances", [[]])[0] if "distances" in data else []
+        
+        durations_min = [value / 60.0 if value is not None else math.inf for value in durations_seconds]
+        distances_km = [value / 1000.0 if value is not None else math.inf for value in distances_meters]
+        
+        return durations_min, distances_km
 
     @staticmethod
     def _fallback_haversine_minutes(depot: Depot, customers: Sequence[Customer], average_speed_kmh: float = 40.0) -> list[float]:
