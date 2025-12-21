@@ -30,6 +30,10 @@ class RoutingRequest(BaseModel):
         default=None,
         description="Pre-assigned routes with customers. If provided, only sequence will be optimized, not assignment."
     )
+    start_from_depot: bool = Field(
+        default=True,
+        description="If True, routes start from DC/depot. If False, routes start from the first customer."
+    )
     persist: bool = True
     requested_by: Optional[str] = Field(default=None, description="Person or system requesting the run.")
     run_label: Optional[str] = Field(default=None, description="Friendly name for persisted outputs.")

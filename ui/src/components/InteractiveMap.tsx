@@ -89,6 +89,35 @@ const customerTooltipStyles = `
     padding: 6px 10px !important;
     font-weight: 600 !important;
   }
+
+  /* Stop number label styling */
+  .stop-number-label {
+    background-color: rgba(255, 255, 255, 0.98) !important;
+    border: 2px solid #1f2937 !important;
+    border-radius: 50% !important;
+    width: 26px !important;
+    height: 26px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    font-weight: 800 !important;
+    font-size: 13px !important;
+    color: #1f2937 !important;
+    box-shadow: 0 3px 6px rgba(0, 0, 0, 0.25) !important;
+    pointer-events: none !important;
+    line-height: 1 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+  
+  .stop-number-label::before {
+    display: none !important;
+  }
+  
+  .stop-number-label .leaflet-tooltip-content {
+    margin: 0 !important;
+    padding: 0 !important;
+  }
 `
 
 // Inject styles once
@@ -105,6 +134,7 @@ export type MapMarker = {
   color?: string
   radius?: number
   tooltip?: string
+  stopNumber?: number // Stop sequence number to display above marker
 }
 
 export type MapPolygon = {
@@ -213,12 +243,22 @@ export function InteractiveMap({
                   weight: 1,
                 }}
               >
+                {marker.stopNumber !== undefined ? (
+                  <Tooltip 
+                    permanent
+                    direction="top"
+                    offset={[0, -(marker.radius ?? 6) - 20]}
+                    className="stop-number-label"
+                  >
+                    {marker.stopNumber}
+                  </Tooltip>
+                ) : null}
                 {marker.tooltip ? (
                   <Tooltip 
                     sticky 
                     permanent={false}
                     direction="top"
-                    offset={[0, -10]}
+                    offset={marker.stopNumber !== undefined ? [0, -35] : [0, -10]}
                     className="customer-tooltip"
                   >
                     <div style={{ 

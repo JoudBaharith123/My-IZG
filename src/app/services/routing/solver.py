@@ -77,6 +77,7 @@ def solve_vrp(
     osrm_table: dict,
     working_days: Sequence[str] | None = None,
     constraints: SolverConstraints | None = None,
+    start_from_depot: bool = True,
 ) -> RoutingResult:
     if not ORTOOLS_AVAILABLE:
         raise ImportError(
@@ -335,12 +336,20 @@ def solve_vrp(
             # Only add customer stops (skip depot node 0)
             if node_index != 0 and node_index - 1 < len(customers):
                 customer = customers[node_index - 1]
+                
+                # If not starting from depot and this is the first stop, set distance to 0
+                # (since the previous node was depot and we're skipping depot distance)
+                adjusted_distance = step_distance
+                if not start_from_depot and sequence == 1:
+                    # First customer - no distance from depot
+                    adjusted_distance = 0.0
+                
                 stops.append(
                     RouteStop(
                         customer_id=customer.customer_id,
                         sequence=sequence,
                         arrival_min=assignment.Value(time_dimension.CumulVar(previous_index)) / 60.0,
-                        distance_from_prev_km=step_distance,
+                        distance_from_prev_km=adjusted_distance,
                     )
                 )
                 sequence += 1
@@ -351,6 +360,20 @@ def solve_vrp(
             day = working_days[len(plans) % len(working_days)]
             route_distance = assignment.Value(distance_dimension.CumulVar(routing.End(vehicle_id))) / 1000.0
             route_duration = assignment.Value(time_dimension.CumulVar(routing.End(vehicle_id))) / 60.0
+            
+            # If not starting from depot, adjust distance/duration to exclude depot segments
+            if not start_from_depot and stops:
+                # Sum distances from stops (first stop has distance 0, others have actual distances)
+                route_distance = sum(stop.distance_from_prev_km for stop in stops)
+                # For duration, use the cumulative time but subtract depot-to-first time
+                # Find first customer index to get depot-to-first duration
+                first_customer = None
+                for i, cust in enumerate(customers):
+                    if cust.customer_id == stops[0].customer_id:
+                        first_customer_idx = i + 1  # +1 because index 0 is depot
+                        depot_to_first_duration = duration_matrix[0][first_customer_idx] / 60.0
+                        route_duration = max(0.0, route_duration - depot_to_first_duration)
+                        break
             violations: dict[str, float] = {}
             if route_distance > constraints.max_distance_per_route_km:
                 violations["distance_km"] = route_distance - constraints.max_distance_per_route_km

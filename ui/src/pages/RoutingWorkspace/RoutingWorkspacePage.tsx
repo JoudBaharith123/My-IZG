@@ -7,6 +7,7 @@ import { CITY_VIEWPORTS, DEFAULT_VIEWPORT } from '../../config/cityViewports'
 import { useCustomerCities } from '../../hooks/useCustomerCities'
 import { useCustomerLocations } from '../../hooks/useCustomerLocations'
 import { useOptimizeRoutes, type OptimizeRoutesPayload, type OptimizeRoutesResponse } from '../../hooks/useOptimizeRoutes'
+import { useRoutesFromDatabase } from '../../hooks/useRoutesFromDatabase'
 import { useZoneSummaries, type ZoneSummary } from '../../hooks/useZoneSummaries'
 import { useDatabaseZoneSummaries } from '../../hooks/useDatabaseZoneSummaries'
 import { useRemoveCustomerFromRoute, useTransferCustomer } from '../../hooks/useUpdateRoute'
@@ -50,7 +51,8 @@ export function RoutingWorkspacePage() {
   const [maxCustomersPerRoute, setMaxCustomersPerRoute] = useState(25)
   const [maxRouteDurationMinutes, setMaxRouteDurationMinutes] = useState(600)
   const [maxDistancePerRouteKm, setMaxDistancePerRouteKm] = useState(50)
-  const [persistOutputs, setPersistOutputs] = useState(false)
+  const [startFromDepot, setStartFromDepot] = useState(true) // Default to starting from DC/depot
+  const [persistOutputs, setPersistOutputs] = useState(true) // Default to true to always save routes
 
   const [routeResult, setRouteResult] = useState<OptimizeRoutesResponse | null>(null)
   const [runMeta, setRunMeta] = useState<{ timestamp: string; durationSeconds: number } | null>(null)
@@ -65,6 +67,12 @@ export function RoutingWorkspacePage() {
   const { mutateAsync: optimizeRoutes, isPending: isOptimizing } = useOptimizeRoutes()
   const { mutateAsync: removeCustomer, isPending: isRemovingCustomer } = useRemoveCustomerFromRoute()
   const { mutateAsync: transferCustomer, isPending: isTransferringCustomer } = useTransferCustomer()
+  
+  // Fetch routes from database when zone is selected
+  const { data: dbRoutes, isLoading: isLoadingDbRoutes } = useRoutesFromDatabase(
+    selectedZone || undefined,
+    selectedCity || undefined
+  )
   const {
     items: zoneCustomerPoints,
     total: zoneCustomerTotal,
@@ -116,6 +124,22 @@ export function RoutingWorkspacePage() {
       setSelectedZone(zoneOptions[0].zone)
     }
   }, [zoneOptions, selectedZone])
+
+  // Load routes from database when zone is selected
+  useEffect(() => {
+    if (dbRoutes && selectedZone) {
+      setRouteResult(dbRoutes)
+      // Set metadata to indicate routes were loaded from database
+      setRunMeta({
+        timestamp: new Date().toISOString(),
+        durationSeconds: 0,
+      })
+    } else if (!selectedZone) {
+      // Clear routes when zone is deselected
+      setRouteResult(null)
+      setRunMeta(null)
+    }
+  }, [dbRoutes, selectedZone])
 
   const selectedZoneInfo = useMemo(
     () => zoneOptions.find((zone) => zone.zone === selectedZone) ?? null,
@@ -205,6 +229,16 @@ export function RoutingWorkspacePage() {
       return []
     }
     
+    // Build a map of customer_id -> stop number for quick lookup
+    const customerStopNumberMap = new Map<string, number>()
+    if (routeResult?.plans?.length) {
+      routeResult.plans.forEach((plan) => {
+        plan.stops.forEach((stop) => {
+          customerStopNumberMap.set(stop.customer_id, stop.sequence)
+        })
+      })
+    }
+    
     // Filter by selected route if one is selected AND routes exist
     const filteredCustomers = selectedRouteId && routeResult?.plans?.length
       ? zoneCustomerPoints.filter((customer) => {
@@ -234,12 +268,16 @@ export function RoutingWorkspacePage() {
         ? `Route: ${routeId}`
         : (customer.zone ? `Zone: ${customer.zone}` : (selectedCity ? `City: ${selectedCity}` : 'Unassigned'))
 
+      // Get stop number if customer is in a route
+      const stopNumber = customerStopNumberMap.get(customer.customer_id)
+
       return {
         id: customer.customer_id,
         position: [customer.latitude, customer.longitude] as [number, number],
         color: markerColor,
         radius: markerRadius,
         tooltip: `${labelParts.join(' - ')}\n${detailLabel}`,
+        stopNumber: stopNumber,
       }
     })
   }, [defaultZoneColor, routeAssignments, routeColorMap, zoneCustomerPoints, selectedRouteId, routeResult, selectedCity])
@@ -311,6 +349,7 @@ export function RoutingWorkspacePage() {
       city: selectedCity,
       zone_id: selectedZone,
       persist: persistOutputs,
+      start_from_depot: startFromDepot,
       constraints: {
         max_customers_per_route: maxCustomersPerRoute,
         max_route_duration_minutes: maxRouteDurationMinutes,
@@ -557,6 +596,34 @@ export function RoutingWorkspacePage() {
                 max={200}
                 onChange={setMaxDistancePerRouteKm}
               />
+            </div>
+
+            <div className="space-y-3 rounded-2xl border border-gray-200 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-800/60">
+              <label className="text-sm font-medium text-gray-700 dark:text-gray-200">
+                Route Start Point
+              </label>
+              <div className="space-y-2">
+                <label className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300">
+                  <input
+                    type="radio"
+                    name="routeStart"
+                    checked={startFromDepot}
+                    onChange={() => setStartFromDepot(true)}
+                    className="h-4 w-4 border-gray-300 text-primary focus:ring-primary/40"
+                  />
+                  Start from DC/Depot (default)
+                </label>
+                <label className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300">
+                  <input
+                    type="radio"
+                    name="routeStart"
+                    checked={!startFromDepot}
+                    onChange={() => setStartFromDepot(false)}
+                    className="h-4 w-4 border-gray-300 text-primary focus:ring-primary/40"
+                  />
+                  Start from first customer
+                </label>
+              </div>
             </div>
 
             <label className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300">

@@ -291,6 +291,123 @@ class OSRMClient:
             "distances": distances,
         }
 
+    def route(self, coordinates: Sequence[tuple[float, float]]) -> dict:
+        """Get route geometry between coordinates using OSRM route endpoint.
+        
+        Returns the route path that follows streets, including geometry as polyline.
+        
+        Args:
+            coordinates: Sequence of (lat, lon) tuples for the route waypoints
+            
+        Returns:
+            Dictionary with route information including 'geometry' (polyline) and 'routes'
+        """
+        if len(coordinates) < 2:
+            raise ValueError("At least two coordinates are required for OSRM route.")
+        
+        # OSRM route endpoint expects coordinates as "lon,lat;lon,lat;..."
+        coordinate_str = ";".join(f"{lon},{lat}" for lat, lon in coordinates)
+        
+        params = {
+            "overview": "full",  # Get full geometry
+            "geometries": "polyline",  # Use polyline encoding
+            "steps": "false",  # Don't need step-by-step instructions
+        }
+        url = f"{self.base_url}/route/v1/{self.profile}/{coordinate_str}"
+        
+        client = self._get_client()
+        try:
+            attempt = 0
+            while True:
+                try:
+                    response = client.get(url, params=params)
+                    response.raise_for_status()
+                    data = response.json()
+                    
+                    if data.get("code") != "Ok":
+                        error_msg = data.get("message", "Unknown OSRM route error")
+                        raise ValueError(f"OSRM route request failed: {error_msg}")
+                    
+                    return data
+                except httpx.HTTPStatusError as e:
+                    attempt += 1
+                    if attempt > self.max_retries:
+                        raise
+                    time.sleep(self.backoff_seconds * attempt)
+                except (httpx.TimeoutException, httpx.ReadTimeout) as e:
+                    attempt += 1
+                    if attempt > self.max_retries:
+                        logger.warning(f"OSRM route request timed out after {self.max_retries} attempts: {e}")
+                        raise
+                    wait_time = self.backoff_seconds * (2 ** (attempt - 1))
+                    logger.debug(f"OSRM route timeout, retrying in {wait_time:.1f}s (attempt {attempt}/{self.max_retries})")
+                    time.sleep(wait_time)
+                except (httpx.ConnectError, httpx.NetworkError, OSError) as e:
+                    attempt += 1
+                    if attempt > self.max_retries:
+                        error_msg = str(e)
+                        raise ConnectionError(
+                            f"Failed to connect to OSRM service at {self.base_url}: {error_msg}"
+                        ) from e
+                    wait_time = self.backoff_seconds * (2 ** (attempt - 1))
+                    logger.debug(f"OSRM network error, retrying in {wait_time:.1f}s (attempt {attempt}/{self.max_retries}): {e}")
+                    time.sleep(wait_time)
+                except (httpx.HTTPError, ValueError) as error:
+                    attempt += 1
+                    if attempt > self.max_retries:
+                        raise
+                    time.sleep(self.backoff_seconds * attempt)
+        finally:
+            client.close()
+
+
+def decode_polyline(polyline: str) -> list[tuple[float, float]]:
+    """Decode Google polyline string to list of (lat, lon) coordinates.
+    
+    OSRM uses Google's polyline encoding format for route geometry.
+    
+    Args:
+        polyline: Encoded polyline string
+        
+    Returns:
+        List of (latitude, longitude) tuples
+    """
+    coordinates = []
+    index = 0
+    lat = 0
+    lon = 0
+    
+    while index < len(polyline):
+        # Decode latitude
+        shift = 0
+        result = 0
+        while True:
+            b = ord(polyline[index]) - 63
+            index += 1
+            result |= (b & 0x1f) << shift
+            shift += 5
+            if b < 0x20:
+                break
+        dlat = ~(result >> 1) if (result & 1) else (result >> 1)
+        lat += dlat
+        
+        # Decode longitude
+        shift = 0
+        result = 0
+        while True:
+            b = ord(polyline[index]) - 63
+            index += 1
+            result |= (b & 0x1f) << shift
+            shift += 5
+            if b < 0x20:
+                break
+        dlon = ~(result >> 1) if (result & 1) else (result >> 1)
+        lon += dlon
+        
+        coordinates.append((lat / 1e5, lon / 1e5))
+    
+    return coordinates
+
 
 def build_coordinate_list(depot_lat: float, depot_lon: float, customers: Sequence[tuple[float, float]]) -> list[tuple[float, float]]:
     return [(depot_lat, depot_lon), *customers]

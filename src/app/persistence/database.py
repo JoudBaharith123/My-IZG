@@ -1059,112 +1059,176 @@ def save_routes_to_database(
         zone_id: Zone ID (zone name) that these routes belong to
         city: City name for the routes
     """
+    import logging
+    
     supabase = get_supabase_client()
     if not supabase:
-        # Database not configured, skip silently
-        import logging
-        logging.info("Supabase not configured - routes will only be saved to files")
+        logging.warning("Supabase not configured - routes will only be saved to files")
         return
     
     try:
-        import logging
-        from datetime import datetime, date
+        from datetime import date
+        
+        logging.info(f"Starting to save routes to database for zone '{zone_id}' in city '{city}'")
         
         # First, find the zone UUID in the database
-        zone_response = supabase.table("zones").select("id").eq("name", zone_id).order("created_at", desc=True).limit(1).execute()
+        zone_response = supabase.table("zones").select("id, name").eq("name", zone_id).order("created_at", desc=True).limit(1).execute()
         
         if not zone_response.data or len(zone_response.data) == 0:
-            logging.warning(f"Zone '{zone_id}' not found in database - cannot save routes")
-            return
+            # Try to find zone by city as fallback
+            logging.warning(f"Zone '{zone_id}' not found in database. Searching by city '{city}'...")
+            zone_response = supabase.table("zones").select("id, name").eq("city", city).ilike("name", f"%{zone_id}%").order("created_at", desc=True).limit(1).execute()
+            
+            if not zone_response.data or len(zone_response.data) == 0:
+                logging.error(f"Zone '{zone_id}' not found in database for city '{city}'. Cannot save routes.")
+                logging.error("Available zones in database (first 10):")
+                try:
+                    all_zones = supabase.table("zones").select("name, city").limit(10).execute()
+                    if all_zones.data:
+                        for zone in all_zones.data:
+                            logging.error(f"  - {zone.get('name')} (city: {zone.get('city')})")
+                except Exception as e:
+                    logging.error(f"Could not list zones: {e}")
+                return
         
         zone_uuid = zone_response.data[0]["id"]
+        found_zone_name = zone_response.data[0].get("name", zone_id)
+        logging.info(f"Found zone '{found_zone_name}' with UUID: {zone_uuid}")
         
         # Get route plans from response
         plans = routes_response.get("plans", [])
         if not plans:
-            logging.info(f"No routes to save for zone '{zone_id}'")
+            logging.warning(f"No routes to save for zone '{zone_id}' (plans list is empty)")
             return
         
-        # Get metadata
-        metadata = routes_response.get("metadata", {})
+        logging.info(f"Preparing {len(plans)} routes for database insertion")
         
         # Prepare routes for database insertion
         routes_to_insert = []
-        for plan in plans:
-            # Convert stops to JSONB format
-            stops_json = []
-            for stop in plan.get("stops", []):
-                stops_json.append({
-                    "customer_id": stop.get("customer_id"),
-                    "sequence": stop.get("sequence"),
-                    "arrival_min": stop.get("arrival_min"),
-                    "distance_from_prev_km": stop.get("distance_from_prev_km"),
-                })
-            
-            # Parse route_date from day (e.g., "MON", "TUE") or use today's date
-            # For now, we'll use today's date. In the future, you might want to map days to actual dates
-            route_date = date.today()
-            
-            # Extract route_id and day
-            route_id = plan.get("route_id", "")
-            day = plan.get("day", "")
-            
-            routes_to_insert.append({
-                "zone_id": zone_uuid,
-                "route_date": route_date.isoformat(),
-                "stops": stops_json,  # Array of stops in JSONB format
-                "total_distance_km": plan.get("total_distance_km"),
-                "total_duration_min": plan.get("total_duration_min"),
-                "vehicle_id": route_id,  # Use route_id as vehicle_id
-                "driver_id": None,  # Can be set later
-                "status": "planned",
-            })
-            
-            # Log route metadata for reference (can be stored in a metadata column if added later)
-            logging.debug(f"Route {route_id} (day: {day}, customers: {plan.get('customer_count', 0)})")
-        
-        # Insert routes into database
-        if routes_to_insert:
-            logging.info(f"Attempting to save {len(routes_to_insert)} routes to database for zone '{zone_id}'")
-            
-            # Delete existing routes for this zone to avoid duplicates
-            # (You might want to keep historical routes - adjust this logic as needed)
+        for plan_idx, plan in enumerate(plans):
             try:
-                existing_routes = supabase.table("routes").select("id").eq("zone_id", zone_uuid).execute()
-                if existing_routes.data:
-                    existing_ids = [r["id"] for r in existing_routes.data]
-                    if existing_ids:
-                        logging.info(f"Deleting {len(existing_ids)} existing routes for zone '{zone_id}'")
-                        # Delete in batches
-                        batch_size = 100
-                        for i in range(0, len(existing_ids), batch_size):
-                            batch = existing_ids[i:i + batch_size]
-                            supabase.table("routes").delete().in_("id", batch).execute()
-            except Exception as delete_error:
-                logging.warning(f"Failed to delete existing routes: {delete_error}")
+                # Convert stops to JSONB format
+                stops_json = []
+                stops = plan.get("stops", [])
+                
+                if not stops:
+                    logging.warning(f"Route {plan.get('route_id', f'Route_{plan_idx}')} has no stops, skipping")
+                    continue
+                
+                for stop in stops:
+                    stops_json.append({
+                        "customer_id": stop.get("customer_id"),
+                        "sequence": stop.get("sequence"),
+                        "arrival_min": stop.get("arrival_min"),
+                        "distance_from_prev_km": stop.get("distance_from_prev_km"),
+                    })
+                
+                # Parse route_date from day (e.g., "MON", "TUE") or use today's date
+                route_date = date.today()
+                
+                # Extract route_id and day
+                route_id = plan.get("route_id", f"Route_{plan_idx + 1}")
+                day = plan.get("day", "")
+                
+                route_data = {
+                    "zone_id": zone_uuid,
+                    "route_date": route_date.isoformat(),
+                    "stops": stops_json,
+                    "total_distance_km": float(plan.get("total_distance_km", 0.0)) if plan.get("total_distance_km") is not None else None,
+                    "total_duration_min": float(plan.get("total_duration_min", 0.0)) if plan.get("total_duration_min") is not None else None,
+                    "vehicle_id": route_id,
+                    "driver_id": None,
+                    "status": "planned",
+                }
+                
+                routes_to_insert.append(route_data)
+                logging.debug(f"Prepared route {route_id} (day: {day}, {len(stops_json)} stops)")
+                
+            except Exception as e:
+                logging.error(f"Error preparing route {plan.get('route_id', f'Route_{plan_idx}')}: {e}")
+                continue
+        
+        if not routes_to_insert:
+            logging.error("No valid routes prepared for insertion. Check route data format.")
+            return
+        
+        logging.info(f"Attempting to save {len(routes_to_insert)} routes to database for zone '{zone_id}'")
+        
+        # Delete existing routes for this zone to avoid duplicates
+        try:
+            existing_routes = supabase.table("routes").select("id").eq("zone_id", zone_uuid).execute()
+            if existing_routes.data:
+                existing_ids = [r["id"] for r in existing_routes.data]
+                if existing_ids:
+                    logging.info(f"Deleting {len(existing_ids)} existing routes for zone '{zone_id}'")
+                    # Delete in batches
+                    batch_size = 100
+                    for i in range(0, len(existing_ids), batch_size):
+                        batch = existing_ids[i:i + batch_size]
+                        supabase.table("routes").delete().in_("id", batch).execute()
+                    logging.info(f"Successfully deleted {len(existing_ids)} existing routes")
+        except Exception as delete_error:
+            logging.warning(f"Failed to delete existing routes (continuing anyway): {delete_error}")
+        
+        # Insert new routes - try batch insert first, fall back to individual inserts
+        inserted_count = 0
+        failed_count = 0
+        
+        try:
+            # Try batch insert (more efficient)
+            logging.info(f"Attempting batch insert of {len(routes_to_insert)} routes into 'routes' table...")
+            response = supabase.table("routes").insert(routes_to_insert).execute()
             
-            # Insert new routes
-            inserted_count = 0
-            failed_count = 0
+            if response.data:
+                inserted_count = len(response.data)
+                logging.info(f"✓ Successfully inserted {inserted_count} routes in batch to 'routes' table")
+                # Verify the insert by checking the response
+                if inserted_count != len(routes_to_insert):
+                    logging.warning(f"Warning: Expected {len(routes_to_insert)} routes, but only {inserted_count} were inserted")
+            else:
+                # Fall back to individual inserts
+                logging.warning("Batch insert returned no data, falling back to individual inserts")
+                raise ValueError("Batch insert returned no data")
+        except Exception as batch_error:
+            logging.warning(f"Batch insert failed, trying individual inserts: {batch_error}")
+            import traceback
+            logging.debug(f"Batch insert error traceback: {traceback.format_exc()}")
             
+            # Fall back to individual inserts
             for route_data in routes_to_insert:
                 try:
-                    supabase.table("routes").insert(route_data).execute()
-                    inserted_count += 1
+                    logging.debug(f"Inserting route {route_data.get('vehicle_id')} individually...")
+                    response = supabase.table("routes").insert(route_data).execute()
+                    if response.data and len(response.data) > 0:
+                        inserted_count += 1
+                        logging.info(f"✓ Inserted route {route_data.get('vehicle_id')} to 'routes' table")
+                    else:
+                        failed_count += 1
+                        logging.error(f"✗ Insert returned no data for route {route_data.get('vehicle_id')}")
+                        logging.error(f"  Route data keys: {list(route_data.keys())}")
+                        logging.error(f"  Stops count: {len(route_data.get('stops', []))}")
                 except Exception as e:
                     failed_count += 1
-                    logging.error(f"Failed to insert route {route_data.get('vehicle_id')}: {e}")
-                    continue
-            
-            if inserted_count > 0:
-                logging.info(f"✓ Successfully inserted {inserted_count} out of {len(routes_to_insert)} routes to database")
-            if failed_count > 0:
-                logging.error(f"❌ Failed to insert {failed_count} routes. Check database configuration and schema.")
+                    logging.error(f"✗ Failed to insert route {route_data.get('vehicle_id')} to 'routes' table: {e}")
+                    import traceback
+                    logging.error(f"  Full error traceback: {traceback.format_exc()}")
+                    logging.error(f"  Route data sample: zone_id={route_data.get('zone_id')}, vehicle_id={route_data.get('vehicle_id')}, stops_count={len(route_data.get('stops', []))}")
+        
+        # Final summary
+        if inserted_count > 0:
+            logging.info(f"✓ Successfully saved {inserted_count} out of {len(routes_to_insert)} routes to database for zone '{zone_id}'")
+        if failed_count > 0:
+            logging.error(f"❌ Failed to insert {failed_count} out of {len(routes_to_insert)} routes. Check database configuration and schema.")
+        if inserted_count == 0 and failed_count == 0:
+            logging.error(f"❌ CRITICAL: No routes were inserted despite having {len(routes_to_insert)} routes to save!")
                     
     except Exception as e:
-        # Log error but don't fail the entire request
         import logging
-        logging.warning(f"Failed to save routes to database: {e}")
+        import traceback
+        logging.error(f"CRITICAL ERROR: Failed to save routes to database: {e}")
+        logging.error(f"Full traceback: {traceback.format_exc()}")
+        # Don't re-raise - let the caller decide, but log the error clearly
+        # This ensures we can see what went wrong in the logs
 
 
 def remove_customer_from_route(zone_id: str, route_id: str, customer_id: str) -> bool:
@@ -1309,4 +1373,127 @@ def update_route_customer(zone_id: str, from_route_id: str, to_route_id: str, cu
         import logging
         logging.error(f"Failed to transfer customer: {e}")
         return False
+
+
+def get_routes_from_database(zone_id: str | None = None, city: str | None = None) -> list[dict[str, Any]]:
+    """Retrieve routes from database.
+    
+    Args:
+        zone_id: Optional zone ID (zone name) filter
+        city: Optional city filter (requires zone lookup)
+        
+    Returns:
+        List of route records from database with zone information embedded
+    """
+    supabase = get_supabase_client()
+    if not supabase:
+        return []
+    
+    try:
+        import logging
+        
+        # First, get zone UUID(s) if filtering by zone_id or city
+        zone_uuids = None
+        zone_lookup = {}  # Map zone UUID to zone info
+        
+        if zone_id:
+            # Find zone UUID by zone name
+            zone_response = supabase.table("zones").select("id, name, metadata").eq("name", zone_id).order("created_at", desc=True).limit(1).execute()
+            if not zone_response.data:
+                logging.warning(f"Zone '{zone_id}' not found in database")
+                return []
+            zone_uuid = zone_response.data[0]["id"]
+            zone_uuids = [zone_uuid]
+            zone_lookup[zone_uuid] = zone_response.data[0]
+        elif city:
+            # Find zone UUIDs by city
+            zone_response = supabase.table("zones").select("id, name, metadata").contains("metadata", {"city": city}).execute()
+            if not zone_response.data:
+                logging.warning(f"No zones found for city '{city}'")
+                return []
+            zone_uuids = [zone["id"] for zone in zone_response.data]
+            for zone in zone_response.data:
+                zone_lookup[zone["id"]] = zone
+        
+        # Build query
+        query = supabase.table("routes").select("*")
+        if zone_uuids:
+            query = query.in_("zone_id", zone_uuids)
+        
+        # Get most recent routes (ordered by created_at desc)
+        response = query.order("created_at", desc=True).execute()
+        routes_data = response.data if response.data else []
+        
+        # Enrich routes with zone information
+        for route in routes_data:
+            zone_uuid = route.get("zone_id")
+            if zone_uuid and zone_uuid in zone_lookup:
+                route["zone_info"] = zone_lookup[zone_uuid]
+            elif zone_uuid and not zone_uuids:
+                # If no filter was applied, fetch zone info on demand
+                zone_response = supabase.table("zones").select("name, metadata").eq("id", zone_uuid).limit(1).execute()
+                if zone_response.data:
+                    route["zone_info"] = zone_response.data[0]
+        
+        if routes_data:
+            logging.info(f"Retrieved {len(routes_data)} routes from database (zone_id={zone_id}, city={city})")
+        
+        return routes_data
+    except Exception as e:
+        import logging
+        logging.warning(f"Failed to retrieve routes from database: {e}")
+        return []
+
+
+def delete_all_routes_from_database() -> int:
+    """Delete all routes from the database.
+    
+    Returns:
+        Number of routes deleted
+    """
+    supabase = get_supabase_client()
+    if not supabase:
+        import logging
+        logging.warning("Supabase not configured - cannot delete routes")
+        return 0
+    
+    try:
+        import logging
+        
+        # Get all route IDs
+        routes_response = supabase.table("routes").select("id").execute()
+        if not routes_response.data:
+            logging.info("No routes found in database to delete")
+            return 0
+        
+        route_ids = [r["id"] for r in routes_response.data]
+        total_count = len(route_ids)
+        
+        if total_count == 0:
+            logging.info("No routes to delete")
+            return 0
+        
+        logging.info(f"Deleting {total_count} routes from database...")
+        
+        # Delete in batches to avoid timeout issues
+        batch_size = 100
+        deleted_count = 0
+        
+        for i in range(0, len(route_ids), batch_size):
+            batch = route_ids[i:i + batch_size]
+            try:
+                supabase.table("routes").delete().in_("id", batch).execute()
+                deleted_count += len(batch)
+                logging.info(f"Deleted batch {i//batch_size + 1}: {len(batch)} routes (total: {deleted_count}/{total_count})")
+            except Exception as batch_error:
+                logging.error(f"Failed to delete batch {i//batch_size + 1}: {batch_error}")
+                continue
+        
+        logging.info(f"Successfully deleted {deleted_count} out of {total_count} routes from database")
+        return deleted_count
+        
+    except Exception as e:
+        import logging
+        logging.error(f"Failed to delete routes from database: {e}")
+        return 0
 

@@ -6,7 +6,7 @@ from dataclasses import asdict
 from typing import Sequence
 
 from ...data.customers_repository import get_customers_for_location, resolve_depot
-from ...models.domain import Customer
+from ...models.domain import Customer, Depot
 from ...persistence.filesystem import FileStorage
 from ...schemas.routing import (
     RoutePlanModel,
@@ -164,17 +164,20 @@ def optimize_routes(payload: RoutingRequest) -> RoutingResponse:
         logging.info("Haversine fallback matrix computed successfully")
 
     constraints = _build_constraints(payload)
+    start_from_depot = payload.start_from_depot if payload.start_from_depot is not None else True
     routing_result = solve_vrp(
         zone_id=payload.zone_id,
         customers=filtered_customers,
         osrm_table=osrm_table,
         constraints=constraints,
+        start_from_depot=start_from_depot,
     )
 
     metadata = routing_result.metadata
     metadata.setdefault("status", metadata.get("status", "complete"))
     metadata.setdefault("zone_id", payload.zone_id)
     metadata.setdefault("city", payload.city)
+    metadata["start_from_depot"] = start_from_depot  # Save for later retrieval
     if payload.run_label:
         metadata["run_label"] = payload.run_label
     if payload.requested_by:
@@ -191,7 +194,13 @@ def optimize_routes(payload: RoutingRequest) -> RoutingResponse:
                 merged_tags.append(normalized)
         metadata["tags"] = merged_tags
 
-    route_overlays = _build_route_overlays(depot_lat=depot.latitude, depot_lon=depot.longitude, plans=routing_result.plans, customers=filtered_customers)
+    route_overlays = _build_route_overlays(
+        depot_lat=depot.latitude,
+        depot_lon=depot.longitude,
+        plans=routing_result.plans,
+        customers=filtered_customers,
+        start_from_depot=start_from_depot,
+    )
     if route_overlays:
         metadata.setdefault("map_overlays", {})
         metadata["map_overlays"]["routes"] = route_overlays
@@ -228,20 +237,24 @@ def optimize_routes(payload: RoutingRequest) -> RoutingResponse:
         ],
     )
 
+    # Always save routes to database (regardless of persist flag)
+    try:
+        from ...persistence.database import save_routes_to_database
+        save_routes_to_database(
+            routes_response=response.model_dump(),
+            zone_id=payload.zone_id,
+            city=payload.city,
+        )
+    except Exception as exc:
+        # Log error but don't fail the entire request
+        import logging
+        import traceback
+        logging.error(f"CRITICAL: Failed to save routes to database: {exc}")
+        logging.error(f"Traceback: {traceback.format_exc()}")
+        # Don't re-raise - routes are still valid and should be returned to user
+        # Database save failure should not prevent route generation from succeeding
+    
     if payload.persist:
-        # Save to database first
-        try:
-            from ...persistence.database import save_routes_to_database
-            save_routes_to_database(
-                routes_response=response.model_dump(),
-                zone_id=payload.zone_id,
-                city=payload.city,
-            )
-        except Exception as exc:
-            # Log error but don't fail the entire request
-            import logging
-            logging.warning(f"Failed to save routes to database: {exc}")
-        
         # Also save to files (backup)
         storage = FileStorage()
         run_dir = storage.make_run_directory(prefix=f"routes_{payload.zone_id}")
@@ -355,18 +368,21 @@ def _optimize_sequences_only(
     metadata["optimization_mode"] = "sequence_only"
     metadata["description"] = "Sequences optimized using OR-Tools with OSRM distance matrix"
     
+    start_from_depot = payload.start_from_depot if payload.start_from_depot is not None else True
+    metadata["start_from_depot"] = start_from_depot  # Save for later retrieval
+    
     if payload.run_label:
         metadata["run_label"] = payload.run_label
     if payload.requested_by:
         metadata["author"] = payload.requested_by
     if payload.notes:
         metadata["notes"] = payload.notes
-    
     route_overlays = _build_route_overlays(
         depot_lat=depot.latitude,
         depot_lon=depot.longitude,
         plans=routing_result.plans,
-        customers=all_customers
+        customers=all_customers,
+        start_from_depot=start_from_depot,
     )
     if route_overlays:
         metadata.setdefault("map_overlays", {})
@@ -389,18 +405,25 @@ def _optimize_sequences_only(
         ],
     )
     
+    # Always save routes to database (regardless of persist flag)
+    try:
+        from ...persistence.database import save_routes_to_database
+        save_routes_to_database(
+            routes_response=response.model_dump(),
+            zone_id=payload.zone_id,
+            city=payload.city,
+        )
+    except Exception as exc:
+        # Log error but don't fail the entire request - routes should still be returned
+        import logging
+        import traceback
+        logging.error(f"CRITICAL: Failed to save routes to database: {exc}")
+        logging.error(f"Traceback: {traceback.format_exc()}")
+        # Don't re-raise - routes are still valid and should be returned to user
+        # Database save failure should not prevent route generation from succeeding
+    
     if payload.persist:
-        try:
-            from ...persistence.database import save_routes_to_database
-            save_routes_to_database(
-                routes_response=response.model_dump(),
-                zone_id=payload.zone_id,
-                city=payload.city,
-            )
-        except Exception as exc:
-            import logging
-            logging.warning(f"Failed to save routes to database: {exc}")
-        
+        # Also save to files (backup)
         storage = FileStorage()
         run_dir = storage.make_run_directory(prefix=f"routes_{payload.zone_id}")
         from ..outputs.routing_formatter import routing_result_to_json, routing_result_to_csv
@@ -416,20 +439,159 @@ def _build_route_overlays(
     depot_lon: float,
     plans: Sequence[RoutePlan],
     customers: Sequence[Customer],
+    start_from_depot: bool = True,
 ) -> list[dict]:
+    """Build route overlays with street-level geometry from OSRM.
+    
+    Uses OSRM route endpoint to get actual street paths between stops,
+    preventing routes from crossing water or other impassable areas.
+    Falls back to straight-line paths if OSRM is unavailable.
+    """
+    import logging
+    
     if not plans:
         return []
+    
     customer_lookup = {customer.customer_id: customer for customer in customers}
     overlays: list[dict] = []
+    
+    # Try to initialize OSRM client for street-level routing
+    osrm_client = None
+    try:
+        osrm_client = OSRMClient()
+    except (ValueError, ConnectionError) as e:
+        logging.warning(f"OSRM not available for route geometry: {e}. Using straight-line paths.")
+    
     for plan in plans:
-        coordinates: list[list[float]] = [[depot_lat, depot_lon]]
+        # Build waypoints for this route
+        waypoints: list[tuple[float, float]] = []
+        
+        if start_from_depot:
+            # Start from depot: depot -> stop1 -> stop2 -> ... -> depot
+            waypoints.append((depot_lat, depot_lon))
+        
         for stop in plan.stops:
             customer = customer_lookup.get(stop.customer_id)
             if not customer:
                 continue
-            coordinates.append([customer.latitude, customer.longitude])
-        # close the loop back to depot for display purposes
-        coordinates.append([depot_lat, depot_lon])
+            waypoints.append((customer.latitude, customer.longitude))
+        
+        if start_from_depot:
+            # Close the loop back to depot
+            waypoints.append((depot_lat, depot_lon))
+        
+        # If we have OSRM, get street-level route geometry
+        if osrm_client and len(waypoints) >= 2:
+            try:
+                # Get route geometry from OSRM
+                route_data = osrm_client.route(waypoints)
+                
+                # Extract geometry from OSRM response
+                if route_data.get("routes") and len(route_data["routes"]) > 0:
+                    route = route_data["routes"][0]
+                    geometry_encoded = route.get("geometry")
+                    
+                    if geometry_encoded:
+                        # Decode polyline to get coordinates
+                        from .osrm_client import decode_polyline
+                        decoded_coords = decode_polyline(geometry_encoded)
+                        
+                        # Convert to [lat, lon] format for frontend
+                        coordinates = [[lat, lon] for lat, lon in decoded_coords]
+                        
+                        # If not starting from depot, aggressively filter out depot segments
+                        if not start_from_depot and plan.stops and coordinates:
+                            from ...services.geospatial import haversine_km
+                            
+                            first_stop = plan.stops[0]
+                            first_customer = customer_lookup.get(first_stop.customer_id)
+                            last_stop = plan.stops[-1] if len(plan.stops) > 0 else None
+                            last_customer = customer_lookup.get(last_stop.customer_id) if last_stop else None
+                            
+                            if first_customer:
+                                first_customer_lat = first_customer.latitude
+                                first_customer_lon = first_customer.longitude
+                                
+                                # Step 1: Filter out ALL coordinates that are too close to depot (within 1km)
+                                # This removes any depot segments that OSRM might have included
+                                DEPOT_FILTER_DISTANCE_KM = 1.0
+                                filtered_coords = []
+                                for coord in coordinates:
+                                    lat, lon = coord[0], coord[1]
+                                    depot_dist = haversine_km(depot_lat, depot_lon, lat, lon)
+                                    if depot_dist >= DEPOT_FILTER_DISTANCE_KM:
+                                        filtered_coords.append(coord)
+                                
+                                # If we filtered everything out, fall back to original coordinates
+                                if not filtered_coords:
+                                    filtered_coords = coordinates
+                                
+                                # Step 2: Find where the route actually starts (closest to first customer)
+                                min_dist = float('inf')
+                                first_customer_idx = 0
+                                for idx, coord in enumerate(filtered_coords):
+                                    lat, lon = coord[0], coord[1]
+                                    dist = haversine_km(first_customer_lat, first_customer_lon, lat, lon)
+                                    if dist < min_dist:
+                                        min_dist = dist
+                                        first_customer_idx = idx
+                                
+                                # Step 3: Trim to start from first customer
+                                coordinates = filtered_coords[first_customer_idx:]
+                                
+                                # Step 4: Force first coordinate to be EXACTLY first customer location
+                                coordinates[0] = [first_customer_lat, first_customer_lon]
+                                
+                                # Step 5: Handle last customer
+                                if last_customer and len(coordinates) > 0:
+                                    last_customer_lat = last_customer.latitude
+                                    last_customer_lon = last_customer.longitude
+                                    
+                                    # Find the coordinate index closest to last customer (search from end)
+                                    min_dist = float('inf')
+                                    last_customer_idx = len(coordinates) - 1
+                                    for idx in range(len(coordinates) - 1, -1, -1):
+                                        lat, lon = coordinates[idx][0], coordinates[idx][1]
+                                        dist = haversine_km(last_customer_lat, last_customer_lon, lat, lon)
+                                        if dist < min_dist:
+                                            min_dist = dist
+                                            last_customer_idx = idx
+                                    
+                                    # Trim coordinates to end at the last customer location
+                                    coordinates = coordinates[:last_customer_idx + 1]
+                                    
+                                    # Force last coordinate to be EXACTLY last customer location
+                                    coordinates[-1] = [last_customer_lat, last_customer_lon]
+                        
+                        overlays.append(
+                            {
+                                "route_id": plan.route_id,
+                                "coordinates": coordinates,
+                                "source": "osrm",
+                            }
+                        )
+                        continue
+            except Exception as e:
+                logging.warning(f"Failed to get OSRM route geometry for {plan.route_id}: {e}. Using straight-line path.")
+        
+        # Fallback: use straight-line path (original behavior)
+        coordinates: list[list[float]] = [[lat, lon] for lat, lon in waypoints]
+        
+        # If not starting from depot, ensure first coordinate is exactly first customer
+        if not start_from_depot and plan.stops and coordinates:
+            first_stop = plan.stops[0]
+            first_customer = customer_lookup.get(first_stop.customer_id)
+            if first_customer:
+                # Force first coordinate to be exactly first customer location
+                coordinates[0] = [first_customer.latitude, first_customer.longitude]
+            
+            # Also ensure last coordinate is exactly last customer
+            if len(plan.stops) > 0:
+                last_stop = plan.stops[-1]
+                last_customer = customer_lookup.get(last_stop.customer_id)
+                if last_customer and coordinates:
+                    coordinates[-1] = [last_customer.latitude, last_customer.longitude]
+        
         overlays.append(
             {
                 "route_id": plan.route_id,
@@ -437,4 +599,5 @@ def _build_route_overlays(
                 "source": "sequence",
             }
         )
+    
     return overlays

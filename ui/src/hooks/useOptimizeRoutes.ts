@@ -38,6 +38,7 @@ export type OptimizeRoutesPayload = {
   zone_id: string
   customer_ids?: string[]
   constraints?: RouteConstraintsPayload
+  start_from_depot?: boolean
   persist?: boolean
 }
 
