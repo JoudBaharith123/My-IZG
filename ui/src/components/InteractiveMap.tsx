@@ -108,6 +108,9 @@ const customerTooltipStyles = `
     line-height: 1 !important;
     padding: 0 !important;
     margin: 0 !important;
+    opacity: 1 !important;
+    visibility: visible !important;
+    z-index: 1000 !important;
   }
   
   .stop-number-label::before {
@@ -117,6 +120,13 @@ const customerTooltipStyles = `
   .stop-number-label .leaflet-tooltip-content {
     margin: 0 !important;
     padding: 0 !important;
+  }
+  
+  /* Ensure stop numbers stay visible on map interactions */
+  .leaflet-container .stop-number-label {
+    pointer-events: none !important;
+    opacity: 1 !important;
+    visibility: visible !important;
   }
 `
 
@@ -245,10 +255,12 @@ export function InteractiveMap({
               >
                 {marker.stopNumber !== undefined ? (
                   <Tooltip 
-                    permanent
+                    permanent={true}
+                    interactive={false}
                     direction="top"
-                    offset={[0, -(marker.radius ?? 6) - 20]}
+                    offset={[0, -(marker.radius ?? 6) - 8]}
                     className="stop-number-label"
+                    opacity={1}
                   >
                     {marker.stopNumber}
                   </Tooltip>

@@ -204,6 +204,17 @@ def optimize_routes(payload: RoutingRequest) -> RoutingResponse:
     if route_overlays:
         metadata.setdefault("map_overlays", {})
         metadata["map_overlays"]["routes"] = route_overlays
+        # Log summary of route overlays
+        import logging
+        logging.info(f"=== Route Overlays Summary ===")
+        logging.info(f"start_from_depot={start_from_depot}, num_routes={len(route_overlays)}")
+        for overlay in route_overlays:
+            route_id = overlay.get("route_id", "unknown")
+            coords = overlay.get("coordinates", [])
+            source = overlay.get("source", "unknown")
+            if coords:
+                first_coord = coords[0]
+                logging.info(f"  Route {route_id}: {len(coords)} coordinates, source={source}, first_coord=({first_coord[0]:.6f}, {first_coord[1]:.6f})")
 
     # Check if we have any routes
     if not routing_result.plans:
@@ -464,15 +475,33 @@ def _build_route_overlays(
     
     for plan in plans:
         # Build waypoints for this route
+        # CRITICAL: When start_from_depot=False, waypoints must ONLY contain customer coordinates
+        # Do NOT use build_coordinate_list here - it always includes depot
+        # We build waypoints directly to control whether depot is included
+        import logging
+        logging.info(f"=== Building route overlay for {plan.route_id} ===")
+        logging.info(f"  Route has {len(plan.stops)} stops: {[s.customer_id for s in plan.stops]}")
+        if plan.stops:
+            logging.info(f"  First customer: {plan.stops[0].customer_id}, Last customer: {plan.stops[-1].customer_id}")
+        
         waypoints: list[tuple[float, float]] = []
         
         if start_from_depot:
             # Start from depot: depot -> stop1 -> stop2 -> ... -> depot
             waypoints.append((depot_lat, depot_lon))
         
+        # Add customer coordinates in sequence order (NEVER use build_coordinate_list for route waypoints)
         for stop in plan.stops:
             customer = customer_lookup.get(stop.customer_id)
             if not customer:
+                logging.warning(f"Customer {stop.customer_id} not found in lookup, skipping")
+                continue
+            # Validate coordinates before adding
+            if not (-90 <= customer.latitude <= 90) or not (-180 <= customer.longitude <= 180):
+                logging.error(f"❌ Invalid coordinates for customer {stop.customer_id}: ({customer.latitude}, {customer.longitude})")
+                continue
+            if abs(customer.latitude) < 1e-6 and abs(customer.longitude) < 1e-6:
+                logging.error(f"❌ Zero/Invalid coordinates for customer {stop.customer_id}: ({customer.latitude}, {customer.longitude})")
                 continue
             waypoints.append((customer.latitude, customer.longitude))
         
@@ -480,9 +509,53 @@ def _build_route_overlays(
             # Close the loop back to depot
             waypoints.append((depot_lat, depot_lon))
         
+        # Verification: When start_from_depot=False, waypoints must NOT include depot
+        # OSRM routes between the waypoints we provide, so excluding depot ensures route starts from first customer
+        if not start_from_depot:
+            # Verify no depot coordinates are in waypoints
+            for wp in waypoints:
+                if abs(wp[0] - depot_lat) < 0.0001 and abs(wp[1] - depot_lon) < 0.0001:
+                    import logging
+                    logging.error(f"ERROR: Depot found in waypoints when start_from_depot=False! This should never happen.")
+                    # Remove depot coordinate if accidentally included
+                    waypoints = [wp for wp in waypoints if not (abs(wp[0] - depot_lat) < 0.0001 and abs(wp[1] - depot_lon) < 0.0001)]
+                    break
+        
         # If we have OSRM, get street-level route geometry
         if osrm_client and len(waypoints) >= 2:
             try:
+                # CRITICAL VERIFICATION: Log exact waypoints before calling OSRM
+                import logging
+                logging.info(f"=== Route {plan.route_id} OSRM route() call ===")
+                logging.info(f"start_from_depot={start_from_depot}, num_waypoints={len(waypoints)}")
+                if waypoints:
+                    first_wp = waypoints[0]
+                    last_wp = waypoints[-1]
+                    # Calculate distance from depot to first waypoint
+                    from ...services.geospatial import haversine_km
+                    first_to_depot_dist = haversine_km(depot_lat, depot_lon, first_wp[0], first_wp[1])
+                    last_to_depot_dist = haversine_km(depot_lat, depot_lon, last_wp[0], last_wp[1])
+                    
+                    logging.info(f"First waypoint: ({first_wp[0]:.6f}, {first_wp[1]:.6f}), distance from depot: {first_to_depot_dist:.3f} km")
+                    logging.info(f"Last waypoint: ({last_wp[0]:.6f}, {last_wp[1]:.6f}), distance from depot: {last_to_depot_dist:.3f} km")
+                    
+                    if not start_from_depot:
+                        # Verify first waypoint is NOT depot
+                        if first_to_depot_dist < 0.1:  # Within 100m of depot
+                            logging.error(f"❌ ERROR: First waypoint is at depot ({first_to_depot_dist:.3f} km away) when start_from_depot=False!")
+                            logging.error(f"   This will cause OSRM to return route starting from depot instead of first customer!")
+                        else:
+                            logging.info(f"✓ First waypoint is a customer ({first_to_depot_dist:.3f} km from depot) - correct!")
+                        
+                        # Verify last waypoint is NOT depot
+                        if last_to_depot_dist < 0.1:
+                            logging.error(f"❌ ERROR: Last waypoint is at depot ({last_to_depot_dist:.3f} km away) when start_from_depot=False!")
+                        else:
+                            logging.info(f"✓ Last waypoint is a customer ({last_to_depot_dist:.3f} km from depot) - correct!")
+                    
+                    # Log all waypoints for debugging
+                    logging.debug(f"All waypoints: {[(lat, lon) for lat, lon in waypoints]}")
+                
                 # Get route geometry from OSRM
                 route_data = osrm_client.route(waypoints)
                 
@@ -499,74 +572,156 @@ def _build_route_overlays(
                         # Convert to [lat, lon] format for frontend
                         coordinates = [[lat, lon] for lat, lon in decoded_coords]
                         
-                        # If not starting from depot, aggressively filter out depot segments
-                        if not start_from_depot and plan.stops and coordinates:
-                            from ...services.geospatial import haversine_km
-                            
+                        # CRITICAL FIX: When start_from_depot=False, ensure route starts from first customer
+                        # and remove any coordinates that are too close to depot
+                        if not start_from_depot and plan.stops and len(coordinates) > 0:
                             first_stop = plan.stops[0]
                             first_customer = customer_lookup.get(first_stop.customer_id)
                             last_stop = plan.stops[-1] if len(plan.stops) > 0 else None
                             last_customer = customer_lookup.get(last_stop.customer_id) if last_stop else None
                             
                             if first_customer:
-                                first_customer_lat = first_customer.latitude
-                                first_customer_lon = first_customer.longitude
+                                first_customer_coord = [first_customer.latitude, first_customer.longitude]
                                 
-                                # Step 1: Filter out ALL coordinates that are too close to depot (within 1km)
-                                # This removes any depot segments that OSRM might have included
-                                DEPOT_FILTER_DISTANCE_KM = 1.0
+                                # Remove any coordinates at the beginning that are too close to depot
+                                # OSRM might include depot coordinates even if we didn't include depot in waypoints
+                                DEPOT_PROXIMITY_THRESHOLD_KM = 0.5  # 500 meters
                                 filtered_coords = []
+                                found_first_customer = False
+                                
                                 for coord in coordinates:
                                     lat, lon = coord[0], coord[1]
-                                    depot_dist = haversine_km(depot_lat, depot_lon, lat, lon)
-                                    if depot_dist >= DEPOT_FILTER_DISTANCE_KM:
+                                    # Skip invalid coordinates
+                                    if not (-90 <= lat <= 90) or not (-180 <= lon <= 180):
+                                        continue
+                                    
+                                    # Calculate distance from depot
+                                    dist_from_depot = haversine_km(depot_lat, depot_lon, lat, lon)
+                                    # Calculate distance from first customer
+                                    dist_from_first = haversine_km(first_customer.latitude, first_customer.longitude, lat, lon)
+                                    
+                                    # If we haven't found the first customer yet, skip coordinates too close to depot
+                                    if not found_first_customer:
+                                        if dist_from_depot < DEPOT_PROXIMITY_THRESHOLD_KM:
+                                            # This coordinate is too close to depot, skip it
+                                            logging.debug(f"  Skipping coord ({lat:.6f}, {lon:.6f}) - too close to depot ({dist_from_depot:.3f} km)")
+                                            continue
+                                        elif dist_from_first < 0.1:  # Within 100m of first customer
+                                            # Found first customer! Start including coordinates from here
+                                            found_first_customer = True
+                                            filtered_coords.append(first_customer_coord)  # Use exact first customer location
+                                            logging.info(f"✓ Found first customer {first_stop.customer_id} at coord ({lat:.6f}, {lon:.6f}), distance from depot: {dist_from_depot:.3f} km")
+                                        else:
+                                            # This coordinate is far from depot and not the first customer
+                                            # It might be part of the route, but we want to start from first customer
+                                            # So we'll skip it and wait for first customer
+                                            continue
+                                    else:
+                                        # We've already found the first customer, include all remaining coordinates
                                         filtered_coords.append(coord)
                                 
-                                # If we filtered everything out, fall back to original coordinates
-                                if not filtered_coords:
-                                    filtered_coords = coordinates
+                                # If we didn't find first customer in the coordinates, force it at the beginning
+                                if not found_first_customer:
+                                    logging.warning(f"⚠ First customer {first_stop.customer_id} not found in OSRM coordinates, forcing it at start")
+                                    filtered_coords = [first_customer_coord] + filtered_coords
+                                else:
+                                    # Ensure first coordinate is exactly first customer location
+                                    filtered_coords[0] = first_customer_coord
                                 
-                                # Step 2: Find where the route actually starts (closest to first customer)
-                                min_dist = float('inf')
-                                first_customer_idx = 0
-                                for idx, coord in enumerate(filtered_coords):
-                                    lat, lon = coord[0], coord[1]
-                                    dist = haversine_km(first_customer_lat, first_customer_lon, lat, lon)
-                                    if dist < min_dist:
-                                        min_dist = dist
-                                        first_customer_idx = idx
+                                coordinates = filtered_coords
+                                logging.info(f"✓✓ Route {plan.route_id}: Filtered to {len(coordinates)} coords starting from customer {first_stop.customer_id}")
+                            
+                            # Ensure last coordinate is exactly last customer location
+                            if last_customer and len(coordinates) > 0:
+                                last_customer_lat = last_customer.latitude
+                                last_customer_lon = last_customer.longitude
                                 
-                                # Step 3: Trim to start from first customer
-                                coordinates = filtered_coords[first_customer_idx:]
-                                
-                                # Step 4: Force first coordinate to be EXACTLY first customer location
-                                coordinates[0] = [first_customer_lat, first_customer_lon]
-                                
-                                # Step 5: Handle last customer
-                                if last_customer and len(coordinates) > 0:
-                                    last_customer_lat = last_customer.latitude
-                                    last_customer_lon = last_customer.longitude
-                                    
-                                    # Find the coordinate index closest to last customer (search from end)
+                                # Validate last customer coordinates
+                                if not (-90 <= last_customer_lat <= 90) or not (-180 <= last_customer_lon <= 180):
+                                    logging.error(f"❌ Invalid last customer coordinates for {last_stop.customer_id}: ({last_customer_lat}, {last_customer_lon})")
+                                else:
+                                    # Find coordinate closest to last customer (search from end backwards)
                                     min_dist = float('inf')
-                                    last_customer_idx = len(coordinates) - 1
+                                    end_idx = len(coordinates) - 1
+                                    
                                     for idx in range(len(coordinates) - 1, -1, -1):
                                         lat, lon = coordinates[idx][0], coordinates[idx][1]
+                                        # Skip invalid coordinates
+                                        if not (-90 <= lat <= 90) or not (-180 <= lon <= 180):
+                                            continue
                                         dist = haversine_km(last_customer_lat, last_customer_lon, lat, lon)
                                         if dist < min_dist:
                                             min_dist = dist
-                                            last_customer_idx = idx
+                                            end_idx = idx
                                     
-                                    # Trim coordinates to end at the last customer location
-                                    coordinates = coordinates[:last_customer_idx + 1]
+                                    logging.info(f"  Closest coordinate to last customer {last_stop.customer_id} at index {end_idx}, distance={min_dist:.3f} km")
+                                
+                                    # Trim to end at last customer (keep coordinates up to and including end_idx)
+                                    if end_idx < len(coordinates) - 1:
+                                        coordinates = coordinates[:end_idx + 1]
+                                        logging.info(f"  Trimmed coordinates from end, keeping first {len(coordinates)} coordinates")
                                     
                                     # Force last coordinate to be EXACTLY last customer location
-                                    coordinates[-1] = [last_customer_lat, last_customer_lon]
+                                    if coordinates:
+                                        coordinates[-1] = [last_customer_lat, last_customer_lon]
+                                        logging.info(f"✓ Last coord forced to customer {last_stop.customer_id}: ({coordinates[-1][0]:.6f}, {coordinates[-1][1]:.6f})")
+                                    else:
+                                        logging.error(f"❌ ERROR: No coordinates to set last coordinate for {last_stop.customer_id}!")
+                        
+                        # Final verification: log first and last coordinates before adding to overlays
+                        if coordinates and plan.stops:
+                            first_final = coordinates[0]
+                            last_final = coordinates[-1]
+                            final_depot_dist_first = haversine_km(depot_lat, depot_lon, first_final[0], first_final[1])
+                            final_depot_dist_last = haversine_km(depot_lat, depot_lon, last_final[0], last_final[1])
+                            
+                            # Get first and last customer IDs for verification
+                            first_stop_id = plan.stops[0].customer_id
+                            last_stop_id = plan.stops[-1].customer_id
+                            first_cust = customer_lookup.get(first_stop_id)
+                            last_cust = customer_lookup.get(last_stop_id)
+                            
+                            if first_cust:
+                                first_cust_dist = haversine_km(first_cust.latitude, first_cust.longitude, first_final[0], first_final[1])
+                                logging.info(f"✓✓ Route {plan.route_id} FINAL: {len(coordinates)} coords")
+                                logging.info(f"  First customer: {first_stop_id} at ({first_cust.latitude:.6f}, {first_cust.longitude:.6f})")
+                                logging.info(f"  First coord: ({first_final[0]:.6f}, {first_final[1]:.6f}), distance from first customer={first_cust_dist:.3f} km, from depot={final_depot_dist_first:.3f} km")
+                            
+                            if last_cust:
+                                last_cust_dist = haversine_km(last_cust.latitude, last_cust.longitude, last_final[0], last_final[1])
+                                logging.info(f"  Last customer: {last_stop_id} at ({last_cust.latitude:.6f}, {last_cust.longitude:.6f})")
+                                logging.info(f"  Last coord: ({last_final[0]:.6f}, {last_final[1]:.6f}), distance from last customer={last_cust_dist:.3f} km, from depot={final_depot_dist_last:.3f} km")
+                            
+                            # Verify coordinates are correct
+                            if not start_from_depot and first_cust:
+                                first_cust_dist_check = haversine_km(first_cust.latitude, first_cust.longitude, first_final[0], first_final[1])
+                                if first_cust_dist_check > 0.05:  # More than 50m away
+                                    logging.error(f"❌ ERROR: First coordinate is {first_cust_dist_check:.3f} km away from first customer {first_stop_id}!")
+                                
+                                if final_depot_dist_first < 0.5:  # Less than 500m from depot
+                                    logging.error(f"❌ ERROR: First coordinate is {final_depot_dist_first:.3f} km from depot! Route should start from customer, not depot!")
+                            
+                            if last_cust:
+                                last_cust_dist_check = haversine_km(last_cust.latitude, last_cust.longitude, last_final[0], last_final[1])
+                                if last_cust_dist_check > 0.05:  # More than 50m away
+                                    logging.error(f"❌ ERROR: Last coordinate is {last_cust_dist_check:.3f} km away from last customer {last_stop_id}!")
+                        
+                        # Create completely fresh copy of coordinates for this route (deep copy to avoid any sharing)
+                        route_coordinates = [[float(c[0]), float(c[1])] for c in coordinates]
+                        
+                        # FINAL VERIFICATION: When start_from_depot=False, ensure first coordinate is first customer
+                        if not start_from_depot and plan.stops and route_coordinates:
+                            first_stop_final = plan.stops[0]
+                            first_cust_final = customer_lookup.get(first_stop_final.customer_id)
+                            if first_cust_final:
+                                # ABSOLUTE FINAL CHECK - replace first coordinate with first customer
+                                route_coordinates[0] = [float(first_cust_final.latitude), float(first_cust_final.longitude)]
+                                logging.info(f"✓✓✓ Route {plan.route_id} ABSOLUTE FINAL: First coord = ({route_coordinates[0][0]:.6f}, {route_coordinates[0][1]:.6f}) = customer {first_stop_final.customer_id}")
                         
                         overlays.append(
                             {
                                 "route_id": plan.route_id,
-                                "coordinates": coordinates,
+                                "coordinates": route_coordinates,  # Fresh list - each route has unique coordinates
                                 "source": "osrm",
                             }
                         )
@@ -577,13 +732,14 @@ def _build_route_overlays(
         # Fallback: use straight-line path (original behavior)
         coordinates: list[list[float]] = [[lat, lon] for lat, lon in waypoints]
         
-        # If not starting from depot, ensure first coordinate is exactly first customer
+        # If not starting from depot, ensure first coordinate is exactly first customer and last is exactly last customer
         if not start_from_depot and plan.stops and coordinates:
             first_stop = plan.stops[0]
             first_customer = customer_lookup.get(first_stop.customer_id)
             if first_customer:
                 # Force first coordinate to be exactly first customer location
                 coordinates[0] = [first_customer.latitude, first_customer.longitude]
+                logging.info(f"✓ Fallback: Route {plan.route_id} first coord set to first customer {first_stop.customer_id}: ({coordinates[0][0]:.6f}, {coordinates[0][1]:.6f})")
             
             # Also ensure last coordinate is exactly last customer
             if len(plan.stops) > 0:
@@ -591,11 +747,15 @@ def _build_route_overlays(
                 last_customer = customer_lookup.get(last_stop.customer_id)
                 if last_customer and coordinates:
                     coordinates[-1] = [last_customer.latitude, last_customer.longitude]
+                    logging.info(f"✓ Fallback: Route {plan.route_id} last coord set to last customer {last_stop.customer_id}: ({coordinates[-1][0]:.6f}, {coordinates[-1][1]:.6f})")
+        
+        # CRITICAL: Make a copy of coordinates to ensure each route has unique coordinates (no shared references)
+        final_coordinates_fallback = [coord[:] for coord in coordinates]
         
         overlays.append(
             {
                 "route_id": plan.route_id,
-                "coordinates": coordinates,
+                "coordinates": final_coordinates_fallback,  # Use copied coordinates - ensure unique per route
                 "source": "sequence",
             }
         )

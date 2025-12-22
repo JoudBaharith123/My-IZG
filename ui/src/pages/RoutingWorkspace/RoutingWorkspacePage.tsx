@@ -323,6 +323,14 @@ export function RoutingWorkspacePage() {
       ? mapOverlayRoutes.filter((route) => route.route_id === selectedRouteId)
       : mapOverlayRoutes
     
+    // Log coordinates for debugging
+    filteredRoutes.forEach((route) => {
+      if (route.coordinates && route.coordinates.length > 0) {
+        const firstCoord = route.coordinates[0]
+        console.log(`[Frontend] Route ${route.route_id}: ${route.coordinates.length} coordinates, first=(${firstCoord[0]}, ${firstCoord[1]})`)
+      }
+    })
+    
     return filteredRoutes
       .filter((route) => route.coordinates.length >= 2)
       .map((route) => {
@@ -379,6 +387,7 @@ export function RoutingWorkspacePage() {
     persistOutputs,
     selectedCity,
     selectedZone,
+    startFromDepot,
   ])
   
   const handleRemoveCustomer = useCallback(async (customerId: string, routeId: string) => {

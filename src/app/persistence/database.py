@@ -1095,6 +1095,32 @@ def save_routes_to_database(
         found_zone_name = zone_response.data[0].get("name", zone_id)
         logging.info(f"Found zone '{found_zone_name}' with UUID: {zone_uuid}")
         
+        # Save start_from_depot to zone metadata for later retrieval
+        try:
+            # Get current zone metadata
+            zone_meta_response = supabase.table("zones").select("metadata").eq("id", zone_uuid).limit(1).execute()
+            zone_metadata = {}
+            if zone_meta_response.data and zone_meta_response.data[0].get("metadata"):
+                zone_metadata = zone_meta_response.data[0]["metadata"]
+                if not isinstance(zone_metadata, dict):
+                    zone_metadata = {}
+            
+            # Extract start_from_depot from routes_response metadata
+            routes_metadata = routes_response.get("metadata", {})
+            if isinstance(routes_metadata, dict) and "start_from_depot" in routes_metadata:
+                start_from_depot = routes_metadata.get("start_from_depot", True)
+                zone_metadata["start_from_depot"] = bool(start_from_depot)
+                logging.info(f"Saving start_from_depot={start_from_depot} to zone '{zone_id}' metadata")
+                
+                # Update zone metadata
+                supabase.table("zones").update({
+                    "metadata": zone_metadata
+                }).eq("id", zone_uuid).execute()
+                logging.info(f"✓ Successfully updated zone metadata with start_from_depot")
+        except Exception as meta_error:
+            logging.warning(f"Failed to save start_from_depot to zone metadata: {meta_error}")
+            # Continue anyway - routes will still be saved
+        
         # Get route plans from response
         plans = routes_response.get("plans", [])
         if not plans:

@@ -28,7 +28,21 @@ class TransferCustomerRequest(BaseModel):
 @router.post("/optimize", response_model=RoutingResponse, status_code=status.HTTP_200_OK)
 def optimize(payload: RoutingRequest) -> RoutingResponse:
     try:
-        return optimize_routes(payload)
+        # Log the start_from_depot value received from frontend
+        import logging
+        logging.info(f"=== API /routes/optimize called ===")
+        logging.info(f"start_from_depot from payload: {payload.start_from_depot}")
+        logging.info(f"zone_id: {payload.zone_id}, city: {payload.city}")
+        
+        result = optimize_routes(payload)
+        
+        # Verify the value was used correctly
+        result_start_from_depot = result.metadata.get("start_from_depot", None)
+        logging.info(f"start_from_depot in result metadata: {result_start_from_depot}")
+        if payload.start_from_depot != result_start_from_depot:
+            logging.warning(f"⚠️ WARNING: start_from_depot mismatch! Request: {payload.start_from_depot}, Result: {result_start_from_depot}")
+        
+        return result
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except Exception as exc:
@@ -229,6 +243,11 @@ def get_routes(
                 start_from_depot = True
                 if isinstance(zone_metadata, dict) and "start_from_depot" in zone_metadata:
                     start_from_depot = bool(zone_metadata.get("start_from_depot", True))
+                    import logging
+                    logging.info(f"Loaded start_from_depot={start_from_depot} from zone metadata for zone '{zone_name}'")
+                else:
+                    import logging
+                    logging.warning(f"start_from_depot not found in zone metadata for zone '{zone_name}', defaulting to True")
                 
                 route_overlays = _build_route_overlays(
                     depot_lat=depot.latitude,
@@ -251,6 +270,10 @@ def get_routes(
         }
         if resolved_city:
             metadata["city"] = resolved_city
+        
+        # Include start_from_depot in response metadata if available
+        if isinstance(zone_metadata, dict) and "start_from_depot" in zone_metadata:
+            metadata["start_from_depot"] = bool(zone_metadata.get("start_from_depot", True))
         
         if route_overlays:
             metadata.setdefault("map_overlays", {})
