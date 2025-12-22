@@ -230,8 +230,11 @@ export function RoutingWorkspacePage() {
     }
     
     // Build a map of customer_id -> stop number for quick lookup
+    // ALWAYS build from all routes to ensure stop numbers are available regardless of filter
+    // When a specific route is selected, we'll still have stop numbers for all customers
     const customerStopNumberMap = new Map<string, number>()
     if (routeResult?.plans?.length) {
+      // Always build the map from all routes to ensure stop numbers are available
       routeResult.plans.forEach((plan) => {
         plan.stops.forEach((stop) => {
           customerStopNumberMap.set(stop.customer_id, stop.sequence)
@@ -269,7 +272,13 @@ export function RoutingWorkspacePage() {
         : (customer.zone ? `Zone: ${customer.zone}` : (selectedCity ? `City: ${selectedCity}` : 'Unassigned'))
 
       // Get stop number if customer is in a route
+      // Always include stop number if it exists in the map (for both all routes and specific route)
       const stopNumber = customerStopNumberMap.get(customer.customer_id)
+      
+      // Debug: Log if stop number is missing for a customer in a route
+      if (routeResult?.plans?.length && routeId && stopNumber === undefined) {
+        console.warn(`Stop number missing for customer ${customer.customer_id} in route ${routeId}`)
+      }
 
       return {
         id: customer.customer_id,
@@ -277,7 +286,7 @@ export function RoutingWorkspacePage() {
         color: markerColor,
         radius: markerRadius,
         tooltip: `${labelParts.join(' - ')}\n${detailLabel}`,
-        stopNumber: stopNumber,
+        stopNumber: stopNumber, // This will be undefined if not in route, which is fine
       }
     })
   }, [defaultZoneColor, routeAssignments, routeColorMap, zoneCustomerPoints, selectedRouteId, routeResult, selectedCity])
@@ -685,24 +694,24 @@ export function RoutingWorkspacePage() {
           </div>
 
           <div className="space-y-2">
-            {isLoadingCustomers && selectedCity ? (
-              <div className="flex items-center justify-center rounded-lg border border-gray-200 bg-gray-50 p-8 text-sm text-gray-500 dark:border-gray-700 dark:bg-gray-900/60 dark:text-gray-300">
-                Loading customers...
-              </div>
-            ) : !selectedCity ? (
-              <div className="relative h-[600px] w-full overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700">
-                <InteractiveMap center={mapViewport.center} zoom={mapViewport.zoom} caption={mapCaption} markers={[]} polylines={[]} />
-                <div className="absolute inset-0 flex items-center justify-center bg-white/80 backdrop-blur-sm dark:bg-gray-900/80">
+            <div className="relative h-[600px] w-full overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700">
+              <InteractiveMap 
+                center={mapViewport.center} 
+                zoom={mapViewport.zoom} 
+                caption={mapCaption} 
+                markers={routeMarkers} 
+                polylines={routePolylines} 
+              />
+              {!selectedCity && (
+                <div className="absolute inset-0 flex items-center justify-center bg-white/80 backdrop-blur-sm dark:bg-gray-900/80 pointer-events-none">
                   <div className="text-center">
                     <p className="text-lg font-semibold text-gray-700 dark:text-gray-200">Select a city to view customers</p>
                     <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">Choose a city from the dropdown to see customers on the map</p>
                   </div>
                 </div>
-              </div>
-            ) : zoneCustomerPoints.length === 0 ? (
-              <div className="relative h-[600px] w-full overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700">
-                <InteractiveMap center={mapViewport.center} zoom={mapViewport.zoom} caption={mapCaption} markers={[]} polylines={[]} />
-                <div className="absolute inset-0 flex items-center justify-center bg-white/80 backdrop-blur-sm dark:bg-gray-900/80">
+              )}
+              {selectedCity && zoneCustomerPoints.length === 0 && !isLoadingCustomers && (
+                <div className="absolute inset-0 flex items-center justify-center bg-white/80 backdrop-blur-sm dark:bg-gray-900/80 pointer-events-none">
                   <div className="text-center">
                     <p className="text-lg font-semibold text-gray-700 dark:text-gray-200">
                       {selectedZone
@@ -716,10 +725,15 @@ export function RoutingWorkspacePage() {
                     </p>
                   </div>
                 </div>
-              </div>
-            ) : (
+              )}
+              {isLoadingCustomers && selectedCity && (
+                <div className="absolute top-3 left-3 rounded-lg bg-white/90 px-3 py-2 text-xs font-medium text-gray-700 shadow backdrop-blur dark:bg-gray-800/90 dark:text-gray-200 pointer-events-none">
+                  Loading customers...
+                </div>
+              )}
+            </div>
+            {selectedCity && zoneCustomerPoints.length > 0 && (
               <>
-                <InteractiveMap center={mapViewport.center} zoom={mapViewport.zoom} caption={mapCaption} markers={routeMarkers} polylines={routePolylines} />
                 {hasMoreZoneCustomers ? (
                   <div className="flex flex-wrap items-center gap-3 text-xs text-gray-500 dark:text-gray-400">
                     <p>

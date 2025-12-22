@@ -191,7 +191,7 @@ export function InteractiveMap({
   return (
     <div
       className={clsx(
-        'relative h-[55vh] w-full overflow-hidden rounded-2xl border border-gray-200 bg-gray-200 dark:border-gray-700 dark:bg-gray-900',
+        'relative h-full w-full overflow-hidden rounded-2xl border border-gray-200 bg-gray-200 dark:border-gray-700 dark:bg-gray-900',
         className,
       )}
     >
