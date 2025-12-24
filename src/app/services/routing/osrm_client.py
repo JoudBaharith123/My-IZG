@@ -409,8 +409,28 @@ def decode_polyline(polyline: str) -> list[tuple[float, float]]:
     return coordinates
 
 
-def build_coordinate_list(depot_lat: float, depot_lon: float, customers: Sequence[tuple[float, float]]) -> list[tuple[float, float]]:
-    return [(depot_lat, depot_lon), *customers]
+def build_coordinate_list(
+    depot_lat: float, 
+    depot_lon: float, 
+    customers: Sequence[tuple[float, float]],
+    start_from_depot: bool = True,
+) -> list[tuple[float, float]]:
+    """Build coordinate list for OSRM requests.
+    
+    Args:
+        depot_lat: Depot latitude
+        depot_lon: Depot longitude
+        customers: Sequence of (lat, lon) tuples for customers
+        start_from_depot: If True, prepend depot to the list. If False, return only customers.
+    
+    Returns:
+        List of (lat, lon) tuples. If start_from_depot=True: [depot, *customers], 
+        otherwise: [*customers]
+    """
+    if start_from_depot:
+        return [(depot_lat, depot_lon), *customers]
+    else:
+        return list(customers)
 
 
 def check_health(base_url: str | None = None) -> bool:
