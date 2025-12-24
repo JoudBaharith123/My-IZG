@@ -59,7 +59,7 @@ class Settings(BaseSettings):
             "http://127.0.0.1:5173",
             "http://localhost:5174",
             "http://127.0.0.1:5174",
-            "https://f3b20235.intelligent-zone-generator.pages.dev",
+            "https://9ca340b2.intelligent-zone-generator.pages.dev",
             "https://zone.binder-tech.io"
         ),
         description="Permitted web origins for browser clients (CORS).",
