@@ -17,7 +17,19 @@ except ValueError:
 
 # Set PYTHONPATH to include src directory
 pythonpath = os.environ.get("PYTHONPATH", "")
-src_path = os.path.join(os.getcwd(), "src")
+# Get absolute path to src directory
+cwd = os.getcwd()
+src_path = os.path.join(cwd, "src")
+# Make sure src directory exists
+if not os.path.isdir(src_path):
+    # Try alternative: if we're in /app, src should be at /app/src
+    # If that doesn't work, try current directory structure
+    if os.path.isdir("src"):
+        src_path = os.path.abspath("src")
+    else:
+        print(f"Warning: src directory not found at {src_path}", file=sys.stderr)
+        src_path = cwd  # Fallback to current directory
+
 if pythonpath:
     os.environ["PYTHONPATH"] = f"{src_path}:{pythonpath}"
 else:

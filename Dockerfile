@@ -20,7 +20,12 @@ COPY docs/ docs/
 COPY psd/ psd/
 COPY data/ data/
 COPY *.md ./
+COPY start_server.py ./
+COPY Procfile ./
 
 EXPOSE 8000
 
-CMD ["uvicorn", "src.app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Use PORT environment variable if set, otherwise default to 8000
+ENV PORT=8000
+
+CMD ["python", "start_server.py"]
