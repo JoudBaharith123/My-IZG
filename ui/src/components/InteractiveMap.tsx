@@ -1,5 +1,7 @@
 import type { LatLngExpression, LatLngTuple } from 'leaflet'
-import { CircleMarker, LayerGroup, MapContainer, Polygon, Polyline, TileLayer, Tooltip } from 'react-leaflet'
+import L from 'leaflet'
+import { Fragment } from 'react'
+import { CircleMarker, LayerGroup, MapContainer, Marker, Polygon, Polyline, TileLayer, Tooltip } from 'react-leaflet'
 import 'leaflet/dist/leaflet.css'
 import clsx from 'clsx'
 import { SimpleEditablePolygon } from './SimpleEditablePolygon'
@@ -90,7 +92,12 @@ const customerTooltipStyles = `
     font-weight: 600 !important;
   }
 
-  /* Stop number label styling */
+  /* Stop number label styling - for DivIcon markers */
+  .stop-number-marker {
+    background: transparent !important;
+    border: none !important;
+  }
+  
   .stop-number-label {
     background-color: rgba(255, 255, 255, 0.98) !important;
     border: 2px solid #1f2937 !important;
@@ -111,15 +118,6 @@ const customerTooltipStyles = `
     opacity: 1 !important;
     visibility: visible !important;
     z-index: 1000 !important;
-  }
-  
-  .stop-number-label::before {
-    display: none !important;
-  }
-  
-  .stop-number-label .leaflet-tooltip-content {
-    margin: 0 !important;
-    padding: 0 !important;
   }
   
   /* Ensure stop numbers stay visible on map interactions */
@@ -176,6 +174,21 @@ export type InteractiveMapProps = {
 }
 
 const DEFAULT_CENTER: LatLngExpression = [23.8859, 45.0792]
+
+// Helper function to calculate position offset for stop number label
+// Moves the position slightly north to appear above the marker
+// Uses a fixed offset that works reasonably well across zoom levels
+function getStopNumberPosition(position: LatLngExpression, radius: number): LatLngExpression {
+  if (Array.isArray(position)) {
+    const [lat, lng] = position
+    // Calculate offset in degrees to position label above the marker
+    // Approximately 0.0001 degrees ≈ 11 meters, which works well for positioning
+    // Offset increases with marker radius to position further above larger markers
+    const offsetDegrees = (radius + 10) * 0.00008
+    return [lat + offsetDegrees, lng]
+  }
+  return position
+}
 
 export function InteractiveMap({
   center = DEFAULT_CENTER,
@@ -242,48 +255,50 @@ export function InteractiveMap({
               </Polyline>
             ))}
             {markers?.map((marker) => (
-              <CircleMarker
-                key={marker.id}
-                center={marker.position}
-                radius={marker.radius ?? 6}
-                pathOptions={{
-                  color: marker.color ?? '#2563eb',
-                  fillColor: marker.color ?? '#2563eb',
-                  fillOpacity: 0.85,
-                  weight: 1,
-                }}
-              >
+              <Fragment key={marker.id}>
+                <CircleMarker
+                  center={marker.position}
+                  radius={marker.radius ?? 6}
+                  pathOptions={{
+                    color: marker.color ?? '#2563eb',
+                    fillColor: marker.color ?? '#2563eb',
+                    fillOpacity: 0.85,
+                    weight: 1,
+                  }}
+                >
+                  {marker.tooltip ? (
+                    <Tooltip 
+                      sticky 
+                      permanent={false}
+                      direction="top"
+                      offset={marker.stopNumber !== undefined ? [0, -35] : [0, -10]}
+                      className="customer-tooltip"
+                    >
+                      <div style={{ 
+                        whiteSpace: 'pre-line',
+                        textAlign: 'left',
+                        lineHeight: '1.5',
+                        fontWeight: '500'
+                      }}>
+                        {marker.tooltip}
+                      </div>
+                    </Tooltip>
+                  ) : null}
+                </CircleMarker>
                 {marker.stopNumber !== undefined ? (
-                  <Tooltip 
-                    permanent={true}
+                  <Marker
+                    position={getStopNumberPosition(marker.position, marker.radius ?? 6)}
+                    icon={L.divIcon({
+                      className: 'stop-number-marker',
+                      html: `<div class="stop-number-label">${marker.stopNumber}</div>`,
+                      iconSize: [26, 26],
+                      iconAnchor: [13, 13],
+                    })}
+                    zIndexOffset={1000}
                     interactive={false}
-                    direction="top"
-                    offset={[0, -(marker.radius ?? 6) - 8]}
-                    className="stop-number-label"
-                    opacity={1}
-                  >
-                    {marker.stopNumber}
-                  </Tooltip>
+                  />
                 ) : null}
-                {marker.tooltip ? (
-                  <Tooltip 
-                    sticky 
-                    permanent={false}
-                    direction="top"
-                    offset={marker.stopNumber !== undefined ? [0, -35] : [0, -10]}
-                    className="customer-tooltip"
-                  >
-                    <div style={{ 
-                      whiteSpace: 'pre-line',
-                      textAlign: 'left',
-                      lineHeight: '1.5',
-                      fontWeight: '500'
-                    }}>
-                      {marker.tooltip}
-                    </div>
-                  </Tooltip>
-                ) : null}
-              </CircleMarker>
+              </Fragment>
             ))}
           </LayerGroup>
         ) : null}
