@@ -4,35 +4,61 @@ from __future__ import annotations
 
 from fastapi import APIRouter, status, HTTPException
 
-from ...services.routing.osrm_client import check_health as osrm_health_check
-from ...data.dc_repository import get_depots, _load_depots_from_database, _load_depots_from_file, _sync_depots_to_database
-
 router = APIRouter(tags=["health"])
 
 
 @router.get("/health", status_code=status.HTTP_200_OK)
 def health_root() -> dict:
+    """Simple health check endpoint that doesn't require any dependencies."""
     return {"status": "ok"}
+
+
+def _get_osrm_health_check():
+    """Lazy import to avoid startup failures."""
+    from ...services.routing.osrm_client import check_health as osrm_health_check
+    return osrm_health_check
+
+
+def _get_depot_functions():
+    """Lazy import to avoid startup failures."""
+    from ...data.dc_repository import (
+        get_depots,
+        _load_depots_from_database,
+        _load_depots_from_file,
+        _sync_depots_to_database,
+    )
+    return {
+        "get_depots": get_depots,
+        "_load_depots_from_database": _load_depots_from_database,
+        "_load_depots_from_file": _load_depots_from_file,
+        "_sync_depots_to_database": _sync_depots_to_database,
+    }
 
 
 @router.get("/health/osrm", status_code=status.HTTP_200_OK)
 def health_osrm() -> dict:
-    status_flag = osrm_health_check()
-    return {"service": "osrm", "healthy": status_flag}
+    """Check OSRM service health."""
+    try:
+        osrm_health_check = _get_osrm_health_check()
+        status_flag = osrm_health_check()
+        return {"service": "osrm", "healthy": status_flag}
+    except Exception as e:
+        return {"service": "osrm", "healthy": False, "error": str(e)}
 
 
 @router.post("/health/sync-depots", status_code=status.HTTP_200_OK)
 def sync_depots() -> dict:
     """Manually sync depots from Excel file to database."""
     try:
+        depot_funcs = _get_depot_functions()
         # Load from file
-        file_depots = _load_depots_from_file()
+        file_depots = depot_funcs["_load_depots_from_file"]()
         
         # Sync to database
-        _sync_depots_to_database(file_depots)
+        depot_funcs["_sync_depots_to_database"](file_depots)
         
         # Check database after sync
-        db_depots = _load_depots_from_database()
+        db_depots = depot_funcs["_load_depots_from_database"]()
         
         return {
             "status": "success",

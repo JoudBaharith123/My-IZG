@@ -30,10 +30,15 @@ if not os.path.isdir(src_path):
         print(f"Warning: src directory not found at {src_path}", file=sys.stderr)
         src_path = cwd  # Fallback to current directory
 
+# Use colon separator for Linux (Railway uses Linux containers)
 if pythonpath:
     os.environ["PYTHONPATH"] = f"{src_path}:{pythonpath}"
 else:
     os.environ["PYTHONPATH"] = src_path
+
+# Also add src to sys.path as a fallback
+if src_path not in sys.path:
+    sys.path.insert(0, src_path)
 
 # Start uvicorn
 # Note: Using single worker for Railway (workers flag can cause issues)
@@ -49,6 +54,8 @@ cmd = [
     str(port_int),
     "--proxy-headers",  # Trust proxy headers from Railway
     "--forwarded-allow-ips", "*",  # Allow forwarded headers from Railway proxy
+    "--timeout-keep-alive", "5",  # Keep connections alive
+    "--timeout-graceful-shutdown", "10",  # Graceful shutdown timeout
     # Removed --workers flag - Railway works better with single worker
     # Add --log-level debug for troubleshooting if needed
 ]
