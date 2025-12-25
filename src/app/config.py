@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     )
     osrm_base_url: Optional[str] = Field(
         default=None,
-        description="Base URL for the OSRM routing service (e.g., http://localhost:5000).",
+        description="Base URL for the OSRM routing service. Examples: http://localhost:5000 (local), https://router.project-osrm.org (public), or leave unset to use haversine distance calculations.",
     )
     osrm_profile: Literal["driving", "driving-hgv"] = Field(
         default="driving",
@@ -59,7 +59,7 @@ class Settings(BaseSettings):
             "http://127.0.0.1:5173",
             "http://localhost:5174",
             "http://127.0.0.1:5174",
-            "https://5dd3d769.intelligent-zone-generator.pages.dev",
+            "https://1819144c.intelligent-zone-generator.pages.dev",
             "https://a573c01f.intelligent-zone-generator.pages.dev",
             "https://zone.binder-tech.io",
             # Allow all Cloudflare Pages subdomains (add specific ones via IZG_FRONTEND_ALLOWED_ORIGINS env var)

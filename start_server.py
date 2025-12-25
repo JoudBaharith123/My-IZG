@@ -36,6 +36,7 @@ else:
     os.environ["PYTHONPATH"] = src_path
 
 # Start uvicorn
+# Note: Using single worker for Railway (workers flag can cause issues)
 cmd = [
     sys.executable,
     "-m",
@@ -45,12 +46,28 @@ cmd = [
     "0.0.0.0",
     "--port",
     str(port_int),
-    "--workers",
-    "2",
+    # Removed --workers flag - Railway works better with single worker
+    # Add --log-level debug for troubleshooting if needed
 ]
 
 print(f"Starting server on port {port_int}...", file=sys.stderr)
 print(f"PYTHONPATH={os.environ['PYTHONPATH']}", file=sys.stderr)
+print(f"Working directory: {os.getcwd()}", file=sys.stderr)
+print(f"Python executable: {sys.executable}", file=sys.stderr)
 
-sys.exit(subprocess.call(cmd))
+# Check if app module can be imported before starting
+try:
+    import app.main
+    print("✅ Successfully imported app.main", file=sys.stderr)
+except Exception as e:
+    print(f"❌ Failed to import app.main: {e}", file=sys.stderr)
+    print(f"   PYTHONPATH: {os.environ.get('PYTHONPATH', 'NOT SET')}", file=sys.stderr)
+    sys.exit(1)
+
+# Run uvicorn
+try:
+    sys.exit(subprocess.call(cmd))
+except Exception as e:
+    print(f"❌ Failed to start uvicorn: {e}", file=sys.stderr)
+    sys.exit(1)
 
