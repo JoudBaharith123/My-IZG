@@ -44,17 +44,15 @@ if ($checkDeps -notlike "*OK*") {
 $env:PYTHONPATH = "$PWD\src;$env:PYTHONPATH"
 Write-Host "✅ PYTHONPATH set to: $env:PYTHONPATH" -ForegroundColor Green
 
-# Start server on port 8001 (avoiding conflict with port 8000)
+# Start server on port 8000 (matching Docker and frontend configuration)
 Write-Host ""
-Write-Host "🌐 Starting uvicorn server on http://0.0.0.0:8001" -ForegroundColor Cyan
-Write-Host "📡 API docs available at http://localhost:8001/docs" -ForegroundColor Cyan
-Write-Host "📡 Frontend should use: http://localhost:8001/api" -ForegroundColor Cyan
-Write-Host ""
-Write-Host "⚠️ NOTE: Running on PORT 8001 (not 8000) to avoid conflicts" -ForegroundColor Yellow
+Write-Host "🌐 Starting uvicorn server on http://0.0.0.0:8000" -ForegroundColor Cyan
+Write-Host "📡 API docs available at http://localhost:8000/docs" -ForegroundColor Cyan
+Write-Host "📡 Frontend should use: http://localhost:8000/api" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "Press Ctrl+C to stop the server" -ForegroundColor Gray
 Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Gray
 Write-Host ""
 
-python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8001
+python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
