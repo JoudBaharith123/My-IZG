@@ -59,10 +59,12 @@ class Settings(BaseSettings):
             "http://127.0.0.1:5173",
             "http://localhost:5174",
             "http://127.0.0.1:5174",
+            "https://5dd3d769.intelligent-zone-generator.pages.dev",
             "https://a573c01f.intelligent-zone-generator.pages.dev",
-            "https://zone.binder-tech.io"
+            "https://zone.binder-tech.io",
+            # Allow all Cloudflare Pages subdomains (add specific ones via IZG_FRONTEND_ALLOWED_ORIGINS env var)
         ),
-        description="Permitted web origins for browser clients (CORS).",
+        description="Permitted web origins for browser clients (CORS). Can be overridden via IZG_FRONTEND_ALLOWED_ORIGINS environment variable.",
     )
 
     # Supabase configuration
