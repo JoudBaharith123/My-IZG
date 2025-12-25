@@ -37,6 +37,7 @@ else:
 
 # Start uvicorn
 # Note: Using single worker for Railway (workers flag can cause issues)
+# Railway requires specific configuration for proxy compatibility
 cmd = [
     sys.executable,
     "-m",
@@ -46,6 +47,8 @@ cmd = [
     "0.0.0.0",
     "--port",
     str(port_int),
+    "--proxy-headers",  # Trust proxy headers from Railway
+    "--forwarded-allow-ips", "*",  # Allow forwarded headers from Railway proxy
     # Removed --workers flag - Railway works better with single worker
     # Add --log-level debug for troubleshooting if needed
 ]

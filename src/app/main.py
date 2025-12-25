@@ -10,7 +10,11 @@ from .config import settings
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title=settings.app_name)
+    app = FastAPI(
+        title=settings.app_name,
+        # Add root_path for Railway proxy compatibility
+        root_path="",
+    )
     if settings.frontend_allowed_origins:
         app.add_middleware(
             CORSMiddleware,
@@ -19,6 +23,18 @@ def create_app() -> FastAPI:
             allow_methods=["*"],
             allow_headers=["*"],
         )
+    
+    # Root endpoint for diagnostics
+    @app.get("/")
+    def root():
+        return {
+            "service": settings.app_name,
+            "status": "running",
+            "api_prefix": settings.api_prefix,
+            "health": f"{settings.api_prefix}/health",
+            "docs": "/docs",
+        }
+    
     app.include_router(health.router, prefix=settings.api_prefix)
     app.include_router(customers.router, prefix=settings.api_prefix)
     app.include_router(zoning.router, prefix=settings.api_prefix)

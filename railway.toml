@@ -9,3 +9,8 @@ healthcheckTimeout = 100
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 10
 
+# Railway networking configuration
+[networking]
+# Ensure service is exposed on public network
+expose = true
+
