@@ -59,15 +59,32 @@ print(f"Python executable: {sys.executable}", file=sys.stderr)
 try:
     import app.main
     print("✅ Successfully imported app.main", file=sys.stderr)
-except Exception as e:
-    print(f"❌ Failed to import app.main: {e}", file=sys.stderr)
+except ImportError as e:
+    print(f"❌ Failed to import app.main (ImportError): {e}", file=sys.stderr)
     print(f"   PYTHONPATH: {os.environ.get('PYTHONPATH', 'NOT SET')}", file=sys.stderr)
+    import traceback
+    traceback.print_exc(file=sys.stderr)
+    sys.exit(1)
+except Exception as e:
+    print(f"❌ Failed to import app.main (Unexpected error): {e}", file=sys.stderr)
+    print(f"   Error type: {type(e).__name__}", file=sys.stderr)
+    import traceback
+    traceback.print_exc(file=sys.stderr)
     sys.exit(1)
 
 # Run uvicorn
+print("🚀 Starting uvicorn server...", file=sys.stderr)
 try:
-    sys.exit(subprocess.call(cmd))
+    result = subprocess.call(cmd)
+    if result != 0:
+        print(f"❌ Uvicorn exited with code {result}", file=sys.stderr)
+    sys.exit(result)
+except KeyboardInterrupt:
+    print("⚠️ Server interrupted by user", file=sys.stderr)
+    sys.exit(0)
 except Exception as e:
     print(f"❌ Failed to start uvicorn: {e}", file=sys.stderr)
+    import traceback
+    traceback.print_exc(file=sys.stderr)
     sys.exit(1)
 
