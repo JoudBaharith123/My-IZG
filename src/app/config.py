@@ -55,16 +55,18 @@ class Settings(BaseSettings):
     solver_time_limit_seconds: int = Field(default=30, ge=0)
     frontend_allowed_origins: tuple[str, ...] = Field(
         default=(
+            # Development origins (localhost)
             "http://localhost:5173",
             "http://127.0.0.1:5173",
             "http://localhost:5174",
             "http://127.0.0.1:5174",
-            "https://1819144c.intelligent-zone-generator.pages.dev",
+            # Production origins (add your production frontend URL via IZG_FRONTEND_ALLOWED_ORIGINS env var)
+            "https://77fc3e62.intelligent-zone-generator.pages.dev",
             "https://a573c01f.intelligent-zone-generator.pages.dev",
             "https://zone.binder-tech.io",
             # Allow all Cloudflare Pages subdomains (add specific ones via IZG_FRONTEND_ALLOWED_ORIGINS env var)
         ),
-        description="Permitted web origins for browser clients (CORS). Can be overridden via IZG_FRONTEND_ALLOWED_ORIGINS environment variable.",
+        description="Permitted web origins for browser clients (CORS). IMPORTANT: In production, override via IZG_FRONTEND_ALLOWED_ORIGINS environment variable with your actual frontend URL(s).",
     )
 
     # Supabase configuration
